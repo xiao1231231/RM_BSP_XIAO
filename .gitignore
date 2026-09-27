@@ -1,0 +1,21 @@
+# ── 构建产物：60MB，绝不提交 ──
+build/
+cmake-build-*/
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.su
+
+# ── CLion / 编辑器 ──
+.idea/
+.run/
+.vscode/
+*.swp
+*.bak
+
+# ── Windows ──
+Thumbs.db
+desktop.ini
