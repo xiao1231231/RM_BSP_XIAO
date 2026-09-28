@@ -59,8 +59,9 @@ struct Struct_UART_Manage_Object
     volatile bool Tx_Submitting;    /* 中断里清零，主循环里读 */
 };
 
-/* 本工程用到的串口实例（后面章节再加 USART3 / USART6） */
+/* 本工程用到的串口实例（加新串口时在这里加一行） */
 extern struct Struct_UART_Manage_Object USART1_Manage_Object;
+extern struct Struct_UART_Manage_Object USART6_Manage_Object;
 
 /**
  * @brief 初始化一个串口：绑定回调、切到第一块缓冲、启动 DMA+IDLE 接收

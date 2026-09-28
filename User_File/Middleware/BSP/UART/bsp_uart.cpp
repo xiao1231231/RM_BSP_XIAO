@@ -6,15 +6,17 @@
 /* ── 本工程用到的串口管理对象 ──
  * 全局静态存储：不 malloc、地址编译期确定、调试器里能按名字直接看。 */
 struct Struct_UART_Manage_Object USART1_Manage_Object;
+struct Struct_UART_Manage_Object USART6_Manage_Object;
 
 /**
  * @brief 句柄 → 管理对象 的映射
- * @note  加新串口时在这里加一行（第 04 章加 USART3）
+ * @note  加新串口时在这里加一行（后面加 USART3 做 DBUS）
  */
 static struct Struct_UART_Manage_Object *uart_get_object(UART_HandleTypeDef *huart)
 {
     if (huart == NULL)             { return NULL; }
     if (huart->Instance == USART1) { return &USART1_Manage_Object; }
+    if (huart->Instance == USART6) { return &USART6_Manage_Object; }
     return NULL;
 }
 
@@ -184,7 +186,8 @@ void BSP_UART_ErrorCallback(UART_HandleTypeDef *huart)
 void BSP_UART_Recover_PeriodElapsedCallback(void)
 {
     /* 加新串口时往这个数组加一项 */
-    struct Struct_UART_Manage_Object *objs[] = { &USART1_Manage_Object };
+    struct Struct_UART_Manage_Object *objs[] = { &USART1_Manage_Object,
+                                                 &USART6_Manage_Object };
 
     for (uint32_t i = 0; i < sizeof(objs) / sizeof(objs[0]); i++)
     {

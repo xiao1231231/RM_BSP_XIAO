@@ -6,6 +6,7 @@
 #include "usart.h"
 #include "sys_timestamp.h"
 #include "bsp_uart.h"
+#include "callback.h"
 #include "led.h"
 #include "buzzer.h"
 #include "sys_attitude.h"
@@ -17,7 +18,13 @@ void System_Init(void)
     LED_Init();
     Buzzer_Init();
 
+    /* USART1：调试串口（波形输出，只发不收 → 回调给 NULL） */
     UART_Init(&huart1, NULL);
+
+    /* USART6：3-pin UART 接口（PG14/PG9），目前还没接外设。
+     * 回调给一个只计数的占位实现（callback.cpp），收链路活着即可；
+     * 接了真实外设（上位机/视觉）后把解析逻辑写进去。 */
+    UART_Init(&huart6, USART6_Frame_Callback);
 
     /* 姿态解算（SPI 层 + BMI088 + VQF）。放在调度器启动前 ——
      * 里面是阻塞的：配置逐步读回校验（失败重试）+ 开机零偏标定 1 秒。

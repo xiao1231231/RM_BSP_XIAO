@@ -1,8 +1,28 @@
 #include "callback.h"
 #include "main.h"
+#include "usart.h"
 #include "bsp_uart.h"
 #include "bsp_spi.h"
 #include "bsp_bmi088.h"
+
+/* ══════════════ USART6 收帧占位 ══════════════
+ *
+ * USART6（PG14/PG9，3-pin UART 接口）还没接外设，这里先只做帧计数，
+ * 证明"接收链路活着"（已用 USB 转 TTL 验证过：收发回显全通）。
+ * 接上位机/视觉时，把解析逻辑写在这里。
+ *
+ * ⚠️ 运行在【中断上下文】（DMA/IDLE 回调）—— 只做轻量的事：
+ *    拷走数据 / 置标志 / 计数。UART_Transmit_Data 非阻塞、可在中断里调，
+ *    但批量数据请先 memcpy 到自己的缓冲，别在回调里做重活。
+ */
+volatile uint32_t usart6_frame_count = 0;
+
+void USART6_Frame_Callback(uint8_t *Buffer, uint16_t Length)
+{
+    (void)Buffer;
+    (void)Length;
+    usart6_frame_count++;       /* 收到一帧就 +1，供调试器观察 */
+}
 
 /* ══════════════ UART ══════════════
  *

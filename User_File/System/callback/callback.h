@@ -22,6 +22,16 @@ void System_Callback_Init(void);
 void SPI1_Callback(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer,
                    uint16_t Tx_Length, uint16_t Rx_Length);
 
+/**
+ * @brief USART6 收帧回调（由 bsp_uart 的接收链路调用）
+ * @note  USART6 还没接外设，当前实现只做帧计数（usart6_frame_count）。
+ *        接上位机/视觉时把解析逻辑写进这里。运行在中断上下文。
+ */
+void USART6_Frame_Callback(uint8_t *Buffer, uint16_t Length);
+
+/** USART6 已收到的帧数（调试器可见；接了真实外设后可删） */
+extern volatile uint32_t usart6_frame_count;
+
 #ifdef __cplusplus
 }
 #endif
