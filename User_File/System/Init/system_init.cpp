@@ -29,8 +29,13 @@ void System_Init(void)
      * 接了真实外设（上位机/视觉）后把解析逻辑写进去。 */
     UART_Init(&huart6, USART6_Frame_Callback);
 
-    /* CAN1：PD0/PD1，1Mbps，过滤器全收 + FIFO0 收报中断（设备由电机模块注册） */
-    CAN_Init(&hcan1);
+    /* CAN1：PD0/PD1，1Mbps，过滤器全收 + FIFO0 收报中断（设备由电机模块注册）。
+     * ★ CAN 起不来 = 四个电机全部不可用，所以失败必须能听见（长鸣一声）——
+     *   否则现象是"电机没反应"，排查会先去怀疑电调和接线。 */
+    if (!CAN_Init(&hcan1))
+    {
+        Buzzer_Beep(2000.0f, 0.5f);
+    }
 
     /* DJI 3508 ×4：一个函数 + 编号枚举建齐，PID 参数集中在这里调。
      * ⚠️ 电调自身的 ID 必须和编号一致（上电"滴"声次数 = 当前编号），

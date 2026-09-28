@@ -231,18 +231,36 @@ static void BMI088_Status_Restore_Ready_On_Recovery(Struct_BMI088_Status &Status
     }
 }
 
-/** @brief 把一条 DMA 流强行恢复到可用状态（HAL_SPI_Abort 之后必须做） */
-static void BMI088_Reset_DMA_Handle(DMA_HandleTypeDef *DMA_Handler)
+/** @brief 把一条 DMA 流恢复到可用状态（HAL_SPI_Abort 之后必须做）
+ *
+ *  @return true = 这条流确实停了，可以再发起事务；false = 硬件还没停
+ *
+ *  @note  ★ 关键在【判据用硬件位，而不是 HAL 的状态书】：
+ *         HAL_DMA_Abort 对"空闲流"和"真超时"都返回失败，这两者必须分开 ——
+ *           · 空闲流：State != BUSY，Abort 直接返回失败（stm32f4xx_hal_dma.c:520），
+ *             但这条流本来就停了，可以放行
+ *           · 真超时：Abort 轮询 EN 超时后放弃（stm32f4xx_hal_dma.c:547），
+ *             硬件可能还在跑；这时若强标 READY，下一笔事务就会盖掉
+ *             这条流正在搬运的数据，而且错误现场被抹掉，事后无从查起
+ *         所以只有 CR 的 EN 位清零了，才归还所有权。 */
+static bool BMI088_Reset_DMA_Handle(DMA_HandleTypeDef *DMA_Handler)
 {
     if (DMA_Handler == nullptr)
     {
-        return;
+        return true;        /* 没有这条流 = 不需要恢复，不是失败 */
     }
 
-    HAL_DMA_Abort(DMA_Handler);
+    (void)HAL_DMA_Abort(DMA_Handler);
+
+    if ((DMA_Handler->Instance->CR & DMA_SxCR_EN) != 0U)
+    {
+        return false;       /* 硬件还没停：不改状态，让上层按"没恢复好"处理 */
+    }
+
     DMA_Handler->ErrorCode = HAL_DMA_ERROR_NONE;
     DMA_Handler->State = HAL_DMA_STATE_READY;
     DMA_Handler->Lock = HAL_UNLOCKED;
+    return true;
 }
 
 /* Function prototypes -------------------------------------------------------*/
@@ -547,8 +565,16 @@ void Class_BMI088::BMI088_Recover_SPI(uint8_t __Reason)
     }
 
     HAL_SPI_Abort(spi_handler);
-    BMI088_Reset_DMA_Handle(spi_handler->hdmatx);
-    BMI088_Reset_DMA_Handle(spi_handler->hdmarx);
+
+    /* ★ 两条流都真停下来，才敢宣布"总线恢复好了"。
+     *   有一条没停就返回：HAL 状态一律不改，下一次超时还会再进来重试 ——
+     *   宁可让上层看见"没恢复好"，也不能给出一条半恢复的总线。 */
+    if (!BMI088_Reset_DMA_Handle(spi_handler->hdmatx) ||
+        !BMI088_Reset_DMA_Handle(spi_handler->hdmarx))
+    {
+        return;
+    }
+
     spi_handler->ErrorCode = HAL_SPI_ERROR_NONE;
     spi_handler->State = HAL_SPI_STATE_READY;
     spi_handler->Lock = HAL_UNLOCKED;

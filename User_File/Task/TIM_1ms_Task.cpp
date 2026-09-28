@@ -7,6 +7,7 @@
 #include "cmsis_os2.h"
 #include "main.h"
 #include "usart.h"
+#include "can.h"
 #include "sys_debug.h"
 #include "sys_timestamp.h"
 #include "bsp_uart.h"
@@ -59,6 +60,9 @@ extern "C" void TIM_1ms_Task(void *argument)
 
         /* 串口接收看门狗：兜底逻辑，只在收停止后才起作用 */
         BSP_UART_Recover_PeriodElapsedCallback();
+
+        /* CAN 总线巡检：bus-off / 总线错误计数（只观察，不做动作） */
+        BSP_CAN_Service_PeriodElapsedCallback(&hcan1);
 
         /* DJI 电机：速度环 + 分组发送，1kHz */
         DJI_Motor_Control_Task();

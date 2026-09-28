@@ -114,8 +114,11 @@ uint8_t UART_Transmit_Data(UART_HandleTypeDef *huart, uint8_t *Data, uint16_t Le
         return HAL_OK;
     }
 
-    /* 没有配 TX DMA 的串口走阻塞发送（本工程 USART1 配了，走不到这里） */
-    return (uint8_t)HAL_UART_Transmit(huart, Data, Length, 100);
+    /* 没配 TX DMA 的串口：本工程 USART1 / USART6 都配了 TX DMA，走不到这里。
+     * 以前这里退化成阻塞发送（最长 100ms），与"非阻塞、忙就丢"的接口契约矛盾 ——
+     * 一个叫 UART_Transmit_Data 的函数不该在某些配置下悄悄变成阻塞。
+     * 真需要阻塞发送，应该另起一个名字明确的接口。 */
+    return (uint8_t)HAL_ERROR;
 }
 
 void BSP_UART_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
@@ -162,17 +165,23 @@ void BSP_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
     obj->Rx_Error_Count++;
 
-    /* ★ 只在【确认 TX 已经不在跑】的时候才放开发送标志。
+    /* ★ 只在【确认 TX DMA 真的没在跑】的时候才放开发送标志。
      *
-     *   这个回调是 RX / TX 共用的：接收错误（ORE / PE / FE / NE）时 HAL 只中止
-     *   RX（UART_EndRxTransfer），TX DMA 很可能还在发。此时若放开标志，
-     *   下一次 UART_Transmit_Data() 就会 memcpy 覆盖【正在被 DMA 读的 Tx_Buffer】，
+     *   不能用 gState 判断（这里以前就是那么写的，是错的）：
+     *   F4 HAL 的 UART_DMAError()（stm32f4xx_hal_uart.c:3177）只看 CR3.DMAT
+     *   开着没有，【不看是哪个流出错】—— RX 流报错时它照样会调
+     *   UART_EndTxTransfer() 把 gState 改成 READY，而那个函数
+     *   （stm32f4xx_hal_uart.c:3356）只清中断位，根本不碰 DMA 流。
+     *   照 gState 放标志 = 允许下一次 memcpy 覆盖正在被 DMA 读的 Tx_Buffer，
      *   把线上那一帧改坏。
      *
-     *   判据用 gState：真 TX 出错时 HAL 内部 UART_EndTxTransfer() 已经把它归位成
-     *   READY，所以"TX 出错 → 标志永远为真 → 日志永久静默"那个场景照样被覆盖；
-     *   发送正常结束时由 TxCpltCallback 放标志。 */
-    if (huart->gState != HAL_UART_STATE_BUSY_TX)
+     *   判据直接看流本身，满足任一条就认为还在跑、不放：
+     *     · State == BUSY     —— HAL 认为它在传
+     *     · CR 的 EN 位还立着 —— 硬件真的还开着（不信 HAL 那本状态书）
+     *   正常发送结束由 TxCpltCallback 放标志，这里只是兜底。 */
+    if (huart->hdmatx == NULL ||
+        (huart->hdmatx->State != HAL_DMA_STATE_BUSY &&
+         (huart->hdmatx->Instance->CR & DMA_SxCR_EN) == 0U))
     {
         obj->Tx_Submitting = false;
     }
