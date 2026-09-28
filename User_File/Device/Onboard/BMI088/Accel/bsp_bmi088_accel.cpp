@@ -99,6 +99,25 @@ bool Class_BMI088_Accel::Init()
     CS_Pin = CS1_ACCEL_Pin;
     Activate_Pin_State = GPIO_PIN_RESET;
 
+    /* ── 恒温初始化（照 basic_framework 的 C 板参数，见 .h 里的换算说明）── */
+    PID_Temperature.Init(HEATER_KP, HEATER_KI, 0.0f,
+                         0.0f,
+                         HEATER_I_OUT_MAX,
+                         HEATER_OUT_MAX,
+                         HEATER_D_T);
+    /* 启动加热 PWM，Compare 从 0 开始（上电不加热，等 PID 接管）。
+     * 启动失败就把恒温关掉 —— IMU 没有恒温也能跑，只是温漂大一点。 */
+    if (HAL_TIM_PWM_Start(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL) != HAL_OK)
+    {
+        Heater_Enable = false;
+        __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, 0U);
+    }
+    else
+    {
+        Heater_Enable = true;
+        __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, 0U);
+    }
+
     uint8_t res;
 
     // 检测通信是否正常（加速度计的芯片 ID 是 0x1E）
@@ -258,6 +277,37 @@ uint8_t Class_BMI088_Accel::SPI_Request_Temperature()
 
     return SPI_Transmit_Receive_Data(SPI_Manage_Object->SPI_Handler, CS_GPIO_Port, CS_Pin,
                                      Activate_Pin_State, tx_data, sizeof(tx_data), 2);
+}
+
+/**
+ * @brief IMU 恒温控制（500Hz 调用，见 .h 说明）
+ *
+ * @note  温度数据无效/过期时立即停热 —— 温度不可信时宁可不加热，
+ *        也不能让 PID 拿着旧温度一直输出大功率。
+ */
+void Class_BMI088_Accel::Heater_Control(const float &__Now_Temperature)
+{
+    if (!Heater_Enable)
+    {
+        return;
+    }
+
+    const Struct_BMI088_Accel_Temperature_State state = Get_Temperature_State();
+    if (!state.Data_Valid || Basic_Math_Is_Invalid_Float(state.Temperature))
+    {
+        __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, 0U);
+        Heater_PWM_Compare = 0U;
+        return;
+    }
+
+    PID_Temperature.Set_Target(HEATER_TARGET_TEMPERATURE);
+    PID_Temperature.Set_Now(__Now_Temperature);
+    PID_Temperature.TIM_Calculate_PeriodElapsedCallback();
+
+    /* PID 输出即 PWM Compare（0~9999），负值截为 0（只能加热不能制冷） */
+    const float out = Basic_Math_Constrain(PID_Temperature.Get_Out(), 0.0f, HEATER_OUT_MAX);
+    Heater_PWM_Compare = (uint32_t)out;
+    __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, Heater_PWM_Compare);
 }
 
 /**

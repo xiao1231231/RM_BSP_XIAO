@@ -13,6 +13,7 @@
 #include "led.h"
 #include "sys_attitude.h"
 #include "bsp_bmi088.h"
+#include "dji_motor.h"
 
 /** 累计丢失的节拍数。恒为 0 才说明 1ms 周期真的守住了 */
 volatile uint32_t task_overrun_count = 0;
@@ -37,8 +38,16 @@ extern "C" void TIM_1ms_Task(void *argument)
         task_period_s = Sys_Get_DeltaTime(&last_cycle);
 
         /* IMU：1ms 服务（兜底轮询 + 传输调度 + 超时恢复）、
-         * 128ms 读一次温度、然后搬运姿态结果 */
+         * 500Hz 恒温 + 128ms 温度读取、然后搬运姿态结果 */
         BMI088_TIM_1ms_Service_PeriodElapsedCallback();
+
+        /* 恒温 500Hz（C 板官方工程同款周期） */
+        static uint32_t heat_div = 0;
+        if (++heat_div >= 2U)
+        {
+            heat_div = 0;
+            BSP_BMI088.Heater_Control();
+        }
 
         if (++attitude_div >= 128U)
         {
@@ -51,6 +60,9 @@ extern "C" void TIM_1ms_Task(void *argument)
         /* 串口接收看门狗：兜底逻辑，只在收停止后才起作用 */
         BSP_UART_Recover_PeriodElapsedCallback();
 
+        /* DJI 电机：速度环 + 分组发送，1kHz */
+        DJI_Motor_Control_Task();
+
         /* 绿灯 500ms 闪烁 */
         if (++blink_div >= 500)
         {
@@ -60,13 +72,16 @@ extern "C" void TIM_1ms_Task(void *argument)
             else{LED_Off();}
         }
 
-        /* 三轴姿态波形，50Hz（通道：roll, pitch, yaw） */
+        /* 三轴姿态 + 恒温观测，50Hz
+         * 通道：roll, pitch, yaw, temp(°C), heat_pwm(0~9999) */
         if (++wave_div >= 20U)
         {
             wave_div = 0;
-            UART_Printf(&huart1, "imu:%.2f,%.2f,%.2f",
+            UART_Printf(&huart1, "imu:%.2f,%.2f,%.2f,%.2f,%lu",
                         (double)Attitude.Roll, (double)Attitude.Pitch,
-                        (double)Attitude.Yaw);
+                        (double)Attitude.Yaw,
+                        (double)BSP_BMI088.Get_Temperature(),
+                        (unsigned long)BSP_BMI088.Get_Heater_PWM_Compare());
         }
 
         /* 节拍推进 + 跳拍保护：必须在所有工作之后。

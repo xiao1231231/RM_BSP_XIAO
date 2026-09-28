@@ -1,0 +1,178 @@
+/**
+ * @file    alg_pid.cpp
+ * @brief   PID 算法实现
+ *
+ * @note    来源：H7_BSP（USTC-RoboWalker / yssickjgd）。未做逻辑改动。
+ */
+
+/* Includes ------------------------------------------------------------------*/
+
+#include "alg_pid.h"
+
+/* Function prototypes -------------------------------------------------------*/
+
+void Class_PID::Init(const float &__K_P, const float &__K_I, const float &__K_D, const float &__K_F, const float &__I_Out_Max, const float &__Out_Max, const float &__D_T, const float &__Dead_Zone, const float &__I_Variable_Speed_A, const float &__I_Variable_Speed_B, const float &__I_Separate_Threshold, const Enum_PID_D_First &__D_First, const float &__D_Filter_Cutoff)
+{
+    const float d_filter_out = D_Filter_Cutoff > 0.0f && D_First == __D_First
+                                   ? D_Filter.Get_Out() : 0.0f;
+    K_P = __K_P;
+    K_I = __K_I;
+    K_D = __K_D;
+    K_F = __K_F;
+    I_Out_Max = __I_Out_Max;
+    Out_Max = __Out_Max;
+    D_T = __D_T;
+    Dead_Zone = __Dead_Zone;
+    I_Variable_Speed_A = __I_Variable_Speed_A;
+    I_Variable_Speed_B = __I_Variable_Speed_B;
+    I_Separate_Threshold = __I_Separate_Threshold;
+    D_First = __D_First;
+    D_Filter_Cutoff = !Basic_Math_Is_Invalid_Float(__D_Filter_Cutoff) && __D_Filter_Cutoff > 0.0f
+                          ? __D_Filter_Cutoff : 0.0f;
+    if (D_Filter_Cutoff > 0.0f)
+    {
+        D_Filter.Init(D_Filter_Cutoff, 1.0f / D_T);
+        // D 支路使用零初值/保留值，不采用 IIR 默认的首帧直通。
+        D_Filter.Reset(d_filter_out);
+    }
+    else
+    {
+        D_Filter.Reset(0.0f);
+    }
+}
+
+float Class_PID::Get_Target() const
+{
+    return Target;
+}
+
+float Class_PID::Get_Now() const
+{
+    return Now;
+}
+
+float Class_PID::Get_Error() const
+{
+    return Pre_Error;
+}
+
+void Class_PID::TIM_Calculate_PeriodElapsedCallback()
+{
+    // P输出
+    float p_out = 0.0f;
+    // I输出
+    float i_out = 0.0f;
+    // D输出
+    float d_out = 0.0f;
+    // F输出
+    float f_out = 0.0f;
+    // 误差
+    float error;
+    // 绝对值误差
+    float abs_error;
+    // 线性变速积分
+    float speed_ratio = 0.0f;
+
+    error = Target - Now;
+    abs_error = Basic_Math_Abs(error);
+
+    // 死区只处理局部误差，不改写调用者目标；正负边界均连续。
+    if (abs_error <= Dead_Zone)
+    {
+        error = 0.0f;
+        abs_error = 0.0f;
+    }
+    else if (error > 0.0f)
+    {
+        error -= Dead_Zone;
+    }
+    else
+    {
+        error += Dead_Zone;
+    }
+
+    // 计算p项
+
+    p_out = K_P * error;
+
+    // 计算i项；为保留阈值调参语义，abs_error 在死区内为零、区外仍为原始误差幅值。
+
+    if (I_Variable_Speed_A == 0.0f && I_Variable_Speed_B == 0.0f)
+    {
+        // 非变速积分
+        speed_ratio = 1.0f;
+    }
+    else
+    {
+        // 变速积分
+        if (abs_error <= I_Variable_Speed_A)
+        {
+            speed_ratio = 1.0f;
+        }
+        else if (I_Variable_Speed_A < abs_error && abs_error < I_Variable_Speed_B)
+        {
+            speed_ratio = (I_Variable_Speed_B - abs_error) / (I_Variable_Speed_B - I_Variable_Speed_A);
+        }
+        else if (abs_error >= I_Variable_Speed_B)
+        {
+            speed_ratio = 0.0f;
+        }
+    }
+    // Ki 为零或进入分离区间时清空积分，避免重新启用时带入旧累积量。
+    if (K_I == 0.0f || (I_Separate_Threshold != 0.0f && abs_error >= I_Separate_Threshold))
+    {
+        Integral_Error = 0.0f;
+    }
+    else
+    {
+        Integral_Error += speed_ratio * D_T * error;
+        // 累加后限幅（输出量纲），保证本周期的积分输出也不越界；兼容负 Ki。
+        if (I_Out_Max != 0.0f)
+        {
+            const float integral_max = Basic_Math_Abs(I_Out_Max / K_I);
+            Basic_Math_Constrain(&Integral_Error, -integral_max, integral_max);
+        }
+        i_out = K_I * Integral_Error;
+    }
+
+    // 计算d项
+
+    const float d_delta = D_First == PID_D_First_DISABLE
+                              ? error - Pre_Error : Pre_Now - Now;
+    if (D_Filter_Cutoff > 0.0f)
+    {
+        // 先滤波差分速率，再施加 K_D；K_D 为零时仍跟踪速率，但 D 输出为零。
+        D_Filter.Set_Now(d_delta / D_T);
+        D_Filter.TIM_Calculate_PeriodElapsedCallback();
+        d_out = K_D * D_Filter.Get_Out();
+    }
+    else
+    {
+        // 关闭时保留原来的乘除顺序，不引入滤波延迟。
+        d_out = K_D * d_delta / D_T;
+    }
+
+    // 计算前馈
+
+    f_out = K_F * (Target - Pre_Target);
+
+    // 计算输出
+
+    Out = p_out + i_out + d_out + f_out;
+
+    // 输出限幅
+
+    if (Out_Max != 0.0f)
+    {
+        Basic_Math_Constrain(&Out, -Out_Max, Out_Max);
+    }
+
+    // 善后工作
+
+    Pre_Now = Now;
+    Pre_Target = Target;
+    Pre_Out = Out;
+    Pre_Error = error;
+}
+
+/************************ COPYRIGHT(C) USTC-ROBOWALKER **************************/

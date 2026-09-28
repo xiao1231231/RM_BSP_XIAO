@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "can.h"
 #include "dma.h"
 #include "rng.h"
 #include "spi.h"
@@ -99,6 +100,8 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM4_Init();
   MX_USART6_UART_Init();
+  MX_TIM10_Init();
+  MX_CAN1_Init();
   /* USER CODE BEGIN 2 */
   System_Init();
   /* USER CODE END 2 */

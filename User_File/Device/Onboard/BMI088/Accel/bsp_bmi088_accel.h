@@ -25,14 +25,20 @@
 #include "bsp_bmi088_accel_register.h"
 #include "bsp_spi.h"
 #include "alg_matrix.h"
+#include "alg_pid.h"
+#include "tim.h"        /* htim10 —— 加热 PWM */
 
 /* Exported macros -----------------------------------------------------------*/
 
 /* ── C 板引脚映射（手册附表）────────────────────────────────────────
  *   INT1_Accel = PC4 —— 加速度计 INT1，推挽输出，对应 MCU 上升沿 EXTI
- *   CS1_Accel  = PA4 —— CubeMX 已给标签（CS1_ACCEL_Pin / CS1_ACCEL_GPIO_Port） */
+ *   CS1_Accel  = PA4 —— CubeMX 已给标签（CS1_ACCEL_Pin / CS1_ACCEL_GPIO_Port）
+ *   加热片     = TIM10_CH1（PF6），100Hz PWM，Compare 越大越热
+ *   （C 板手册：高电平加热，功率 0.58W@5V，无电池电压补偿一说） */
 #define BMI088_ACCEL_INT_GPIO_Port  GPIOC
 #define BMI088_ACCEL_INT_Pin        GPIO_PIN_4
+#define BMI088_HEAT_TIM             (&htim10)
+#define BMI088_HEAT_CHANNEL         TIM_CHANNEL_1
 
 /* Exported types ------------------------------------------------------------*/
 
@@ -63,6 +69,24 @@ class Class_BMI088_Accel
 public:
     // 每个通信/配置步骤最多尝试 5 次，失败返回 false。
     bool Init();
+
+    /**
+     * @brief IMU 恒温控制（★ 需要周期调用，500Hz；本工程在 1ms 任务里分频）
+     * @note  方案照搬 basic_framework（C 板官方工程）：
+     *          纯 PID 直出 PWM 占空比 —— 温度低就加热多，到目标就少给。
+     *          没有独立的"预热阶段"，全靠 PID 积分从 0 爬上来
+     *          （积分限幅限制了爬升速度，等效于缓慢预热，不会过冲太多）。
+     *        ★ 目标温度 40°C：C 板官方的取值。再高收益递减（温漂变小变慢），
+     *          而夏天 40°C 起点近、加热负担小。
+     *        @param __Now_Temperature 当前 IMU 温度（°C）
+     */
+    void Heater_Control(const float &__Now_Temperature);
+
+    /** 恒温是否已使能（Init 里决定） */
+    inline bool Get_Heater_Enable() const;
+
+    /** 最近一次输出的 PWM Compare（调试观察用） */
+    inline uint32_t Get_Heater_PWM_Compare() const;
 
     inline float Get_Now_Temperature() const;
 
@@ -123,6 +147,26 @@ protected:
     /** 温度跳变判野值后，要连续这么多帧一致才重新采信 */
     uint8_t TEMPERATURE_REBASE_SAMPLE_COUNT = 3U;
 
+    /* ── 恒温（参数来自 basic_framework，按本工程 ARR=9999 等比换算）────
+     *   原版（C 板官方）：Kp=1000, Ki=20, Kd=0，MaxOut=2000（他们的 ARR≈2000）
+     *   本工程 ARR=9999，是原版的 ~5 倍 → Kp/Ki/MaxOut 等比 ×5：
+     *     Kp 1000→5000, Ki 20→100, MaxOut 2000→9999, IntegralLimit 300→1500
+     *   等比换算后 PID 的动态特性不变（同样的误差 → 同样的占空比比例）。 */
+    static constexpr float HEATER_KP = 5000.0f;
+    static constexpr float HEATER_KI = 100.0f;
+    static constexpr float HEATER_TARGET_TEMPERATURE = 40.0f;
+    static constexpr float HEATER_OUT_MAX = 9999.0f;
+    static constexpr float HEATER_I_OUT_MAX = 1500.0f;
+    /** 恒温计算周期：1ms 任务每 2 拍调一次 = 500Hz（与官方一致） */
+    static constexpr float HEATER_D_T = 0.002f;
+
+    /** 恒温 PID */
+    Class_PID PID_Temperature;
+    /** 是否使能恒温（Init 决定；PWM 启动失败自动关闭） */
+    bool Heater_Enable = false;
+    /** 最近一次写进 PWM 的 Compare */
+    volatile uint32_t Heater_PWM_Compare = 0U;
+
     /* ── 状态 ── */
 
     Struct_BMI088_Accel_Register Register = {0};
@@ -157,6 +201,16 @@ extern const float GRAVITY_ACCELERATION;
 inline float Class_BMI088_Accel::Get_Now_Temperature() const
 {
     return (Now_Temperature);
+}
+
+inline bool Class_BMI088_Accel::Get_Heater_Enable() const
+{
+    return (Heater_Enable);
+}
+
+inline uint32_t Class_BMI088_Accel::Get_Heater_PWM_Compare() const
+{
+    return (Heater_PWM_Compare);
 }
 
 inline bool Class_BMI088_Accel::Get_Valid_Flag() const

@@ -114,6 +114,20 @@ public:
     bool Init();
     bool Is_Initialized() const { return Init_Finished_Flag; }
 
+    /**
+     * @brief IMU 恒温控制 —— 转发给加速度计模块（见 bsp_bmi088_accel.h）
+     * @note  需要 500Hz 周期调用；1ms 任务里分频。内部有温度有效性检查，
+     *        温度不可信时自动停热。
+     */
+    void Heater_Control()
+    {
+        BMI088_Accel.Heater_Control(BMI088_Accel.Get_Now_Temperature());
+    }
+
+    inline bool Get_Heater_Enable() const { return BMI088_Accel.Get_Heater_Enable(); }
+    inline uint32_t Get_Heater_PWM_Compare() const { return BMI088_Accel.Get_Heater_PWM_Compare(); }
+    inline float Get_Temperature() const { return BMI088_Accel.Get_Now_Temperature(); }
+
     /** 解算一帧（从陀螺样本队列取一个样本，跑一次 VQF）——由 BMI088_Task 调用 */
     void Calculate();
 

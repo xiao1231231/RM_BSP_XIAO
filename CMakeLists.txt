@@ -53,8 +53,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Onboard/LED/led.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/UART/bsp_uart.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/SPI/bsp_spi.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/CAN/bsp_can.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/TIM_1ms_Task.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/BMI088_Task.cpp
+
+        # ── DJI 电机（3508/C620）──
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Motor/DJImotor/dji_motor.cpp
 
         # ── BMI088 驱动（移植自 H7_BSP / USTC-RoboWalker）──
         # 结构：Gyro（FIFO 读取 + 时间戳重建 + 样本队列）
@@ -80,6 +84,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/VQF/alg_matrix.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/VQF/alg_quaternion.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/VQF/alg_filter_vqf.cpp
+
+        # ── PID ──
+        # 来自 H7_BSP（完整保留，电机闭环复用）；第一个用户是 IMU 恒温，
+        # 参数照 basic_framework（C 板官方）按本工程 ARR 等比换算。
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/PID/alg_filter_iir.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/PID/alg_pid.cpp
 )
 
 
@@ -94,6 +104,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         User_File/Device/Onboard/Buzzer
         User_File/Middleware/BSP/UART
         User_File/Middleware/BSP/SPI
+        User_File/Middleware/BSP/CAN
+        User_File/Device/Peripheral/Motor/DJImotor
 
         # ── BMI088 + 姿态解算 ──
         User_File/Device/Onboard/BMI088
@@ -101,6 +113,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         User_File/Device/Onboard/BMI088/Accel
         User_File/Middleware/Algorithm/Matrix
         User_File/Middleware/Algorithm/VQF
+        User_File/Middleware/Algorithm/PID
         User_File/System/INS
 )
 

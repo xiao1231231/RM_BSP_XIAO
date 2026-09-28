@@ -4,6 +4,7 @@
 #include "bsp_uart.h"
 #include "bsp_spi.h"
 #include "bsp_bmi088.h"
+#include "bsp_can.h"
 
 /* ══════════════ USART6 收帧占位 ══════════════
  *
@@ -93,10 +94,19 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     }
 }
 
+/* ══════════════ CAN：FIFO0 收报 ══════════════
+ *
+ * bsp_can 把所有过滤器都指向 FIFO0，所以接收回调只有这一个。
+ * "MsgPending" = FIFO 里躺了报文待取；真正的取帧和按 ID 分发在 bsp_can 里。
+ */
+extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+    BSP_CAN_RxFifo0Callback(hcan);
+}
+
 /* ── 后面几章的回调加在这里，同样【每一个】都要 extern "C" ──
- * 第 05 章：HAL_CAN_RxFifo0MsgPendingCallback() / HAL_CAN_TxMailbox0CompleteCallback()
  * 第 09 章：HAL_ADC_ConvCpltCallback()          （ADC 采样完成）
- * （第 06 章 BMI088 的 SPI/EXTI 回调已经在上面了）
+ * （第 05 章 CAN 的收报回调已经在上面了；BMI088 的 SPI/EXTI 也已经在了）
  */
 
 extern "C" void System_Callback_Init(void)
@@ -105,3 +115,4 @@ extern "C" void System_Callback_Init(void)
      * 不像 basic_framework 那样需要运行时注册回调指针。
      * 保留这个函数是为了给"运行时注册"留一个统一入口。 */
 }
+
