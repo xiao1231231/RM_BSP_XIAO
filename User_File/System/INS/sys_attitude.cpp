@@ -137,36 +137,70 @@ void Attitude_Init(void)
 
 void Attitude_Task(void)
 {
-    /* ── 四元数 ── */
-    Class_Quaternion_f32 quaternion = BSP_BMI088.Get_Quaternion();
-    Attitude.q[0] = quaternion[0];
-    Attitude.q[1] = quaternion[1];
-    Attitude.q[2] = quaternion[2];
-    Attitude.q[3] = quaternion[3];
+    /* ── 从设备层取【整帧】结果 ──
+     * 一次原子复制，保证四元数 / 欧拉角 / 原始量 / 零偏来自同一帧；
+     * 不再逐个 getter 拼数据（那会拿到"半帧"，见结构体注释）。 */
+    Struct_BMI088_Attitude_Frame frame;
+    const bool valid = BSP_BMI088.Get_Attitude_Frame(frame);
 
-    /* ── 欧拉角 ──
-     * ★ 顺序是 [Yaw, Pitch, Roll]（标准 ZYX 约定），单位【弧度】，乘 180/π 转度。
-     *   别信名字，用数学验：绕 X 轴转 30° 的四元数 (cos15°, sin15°, 0, 0) 代入库的
-     *   公式，只有 result[2] 得到 30°，而绕 X 轴转就是 Roll。 */
-    const Class_Matrix_f32<3, 1> euler = BSP_BMI088.Get_Euler_Angle();
-    Attitude.Yaw   = euler[0][0] * RAD_2_DEG;
-    Attitude.Pitch = euler[1][0] * RAD_2_DEG;
-    Attitude.Roll  = euler[2][0] * RAD_2_DEG;
+    /* 以上一帧为底：无效时只把 Valid 拉低、让 Sample_Time_Us / Sequence 停住，
+     * 数值保持上一帧 —— 波形上看到的是"冻住的最后一帧"，比跳回 0 好排查。 */
+    Struct_Attitude next = Attitude;
 
-    /* ── VQF 独有的两个诊断量 ── */
-    const Class_Matrix_f32<3, 1> bias = BSP_BMI088.Get_VQF_Gyro_Bias();
-    Attitude.GyroBias[0] = bias[0][0];
-    Attitude.GyroBias[1] = bias[1][0];
-    Attitude.GyroBias[2] = bias[2][0];
-    Attitude.Rest_Detected = BSP_BMI088.Get_VQF_Rest_Detected() ? 1U : 0U;
+    if (valid)
+    {
+        /* ── 四元数 ── */
+        next.q[0] = frame.Quaternion[0];
+        next.q[1] = frame.Quaternion[1];
+        next.q[2] = frame.Quaternion[2];
+        next.q[3] = frame.Quaternion[3];
 
-    /* ── 原始数据（未扣零偏，机体系）── */
-    const Class_Matrix_f32<3, 1> gyro = BSP_BMI088.Get_Original_Gyro();
-    Attitude.Gyro[0] = gyro[0][0];
-    Attitude.Gyro[1] = gyro[1][0];
-    Attitude.Gyro[2] = gyro[2][0];
-    const Class_Matrix_f32<3, 1> accel = BSP_BMI088.Get_Original_Accel();
-    Attitude.Accel[0] = accel[0][0];
-    Attitude.Accel[1] = accel[1][0];
-    Attitude.Accel[2] = accel[2][0];
+        /* ── 欧拉角 ──
+         * ★ 顺序是 [Yaw, Pitch, Roll]（标准 ZYX 约定），单位【弧度】，乘 180/π 转度。
+         *   别信名字，用数学验：绕 X 轴转 30° 的四元数 (cos15°, sin15°, 0, 0) 代入库的
+         *   公式，只有 result[2] 得到 30°，而绕 X 轴转就是 Roll。 */
+        next.Yaw   = frame.Euler_Angle[0][0] * RAD_2_DEG;
+        next.Pitch = frame.Euler_Angle[1][0] * RAD_2_DEG;
+        next.Roll  = frame.Euler_Angle[2][0] * RAD_2_DEG;
+
+        /* ── VQF 独有的两个诊断量 ── */
+        next.GyroBias[0] = frame.Gyro_Bias[0][0];
+        next.GyroBias[1] = frame.Gyro_Bias[1][0];
+        next.GyroBias[2] = frame.Gyro_Bias[2][0];
+        next.Rest_Detected = frame.Rest_Detected;
+
+        /* ── 原始数据（未扣零偏，机体系）── */
+        next.Gyro[0] = frame.Gyro[0][0];
+        next.Gyro[1] = frame.Gyro[1][0];
+        next.Gyro[2] = frame.Gyro[2][0];
+        next.Accel[0] = frame.Accel[0][0];
+        next.Accel[1] = frame.Accel[1][0];
+        next.Accel[2] = frame.Accel[2][0];
+
+        next.Sample_Time_Us = frame.Sample_Time_Us;
+        next.Sequence       = frame.Sequence;
+    }
+    next.Valid = valid ? 1U : 0U;
+
+    /* ── 一次提交 ──
+     * 读者（将来的控制环 / 上位机）走 Attitude_Get_Snapshot() 整帧取走，
+     * 不会读到"改了一半"的结构体。 */
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    Attitude = next;
+    __DMB();
+    __set_PRIMASK(primask);
+}
+
+bool Attitude_Get_Snapshot(Struct_Attitude *Out)
+{
+    if (Out == NULL) { return false; }
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    *Out = Attitude;
+    __DMB();
+    __set_PRIMASK(primask);
+
+    return Out->Valid != 0U;
 }

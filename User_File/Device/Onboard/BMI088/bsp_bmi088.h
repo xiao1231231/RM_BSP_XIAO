@@ -89,6 +89,33 @@ struct Struct_BMI088_VQF_Config
     float Accel_D_T = 0.004f;
 };
 
+/**
+ * @brief 一帧完整的姿态结果：生产者一次提交、消费者一次取走
+ *
+ * @note  ★ 为什么需要它：姿态由 BMI088_Task 计算、1ms 任务取用，两者是
+ *        【不同任务】。逐个 getter 读会读到"半帧"—— 比如第 N 帧的四元数
+ *        配第 N-1 帧的欧拉角（写完四元数后被抢占切走）。这里把一帧的所有
+ *        量打包成一个结构体，生产者只在短临界区里整体提交一次，
+ *        消费者（Get_Attitude_Frame）也整体复制，杜绝半帧组合。
+ *
+ *        Sequence 每发布一帧 +1，消费者可比对判断"有没有新帧"；
+ *        Sample_Time_Us 是产出这帧的【陀螺样本时刻】，不是"现在"。
+ *        Valid = 确实产出了结果；队列没数据 / 初始化未完成时不发布，
+ *        帧内容停在上一帧（Valid 也不变 false 以外的字段）。
+ */
+struct Struct_BMI088_Attitude_Frame
+{
+    Class_Quaternion_f32 Quaternion;        ///< [w, x, y, z]
+    Class_Matrix_f32<3, 1> Euler_Angle;     ///< [Yaw, Pitch, Roll]（弧度，库的约定）
+    Class_Matrix_f32<3, 1> Gyro_Bias;       ///< VQF 在线估计的零偏 rad/s
+    Class_Matrix_f32<3, 1> Gyro;            ///< 机体系原始角速度（未扣零偏）rad/s
+    Class_Matrix_f32<3, 1> Accel;           ///< 机体系加速度 m/s^2
+    uint64_t Sample_Time_Us = 0U;           ///< 产出本帧的陀螺样本时间戳
+    uint32_t Sequence = 0U;                 ///< 发布序号，每帧 +1
+    uint8_t Rest_Detected = 0U;             ///< VQF 静止检测标志
+    bool Valid = false;                     ///< true = 这是一帧真实算出的结果
+};
+
 class Class_BMI088
 {
 public:
@@ -151,6 +178,15 @@ public:
     inline Class_Matrix_f32<3, 1> Get_Gyro_Body() const;
     inline Class_Matrix_f32<3, 1> Get_Accel() const;
     inline Class_Matrix_f32<3, 1> Get_Gyro() const;
+
+    /**
+     * @brief 整帧复制最近发布的姿态结果（★ 跨任务读姿态统一走这个）
+     * @param __Out 复制结果（含 Sample_Time_Us / Sequence / Valid）
+     * @return __Out.Valid
+     * @note  在关中断窗口内一次拷走整帧 —— 不会拿到"半帧组合"，
+     *        也顺带挡住任务切换（PendSV）。
+     */
+    bool Get_Attitude_Frame(Struct_BMI088_Attitude_Frame &__Out) const;
 
     /* ── 诊断量（本来是给波形/调试器看的）── */
     inline float Get_Accel_Norm() const;
@@ -243,6 +279,12 @@ protected:
     Class_Matrix_f32<3, 1> Vector_Accel;
     Class_Matrix_f32<3, 1> Vector_Gyro;
 
+    /* ── 姿态整帧发布（见 Struct_BMI088_Attitude_Frame 注释）──
+     * 只在 Calculate() 收尾写、只在 Get_Attitude_Frame() 读，
+     * 两边都在短临界区里，保证"整帧"语义。 */
+    Struct_BMI088_Attitude_Frame Attitude_Frame = {};
+    uint32_t Attitude_Sequence = 0U;        ///< 提交时自增，保证序号单调
+
     float Accel_Norm = 0.0f;
     uint32_t Accel_Update_Result = 0U;
     uint32_t Accel_Update_Attempt_Counter = 0U;
@@ -264,6 +306,9 @@ protected:
     uint32_t Sensor_Ready_Gap_Counter = 0U;
     uint32_t Timestamp_Anomaly_Counter = 0U;
     uint64_t Calculating_Time = 0U;
+
+    /** 整帧发布：只在 Calculate() 收尾调用（生产者是 BMI088_Task） */
+    void Publish_Attitude_Frame(const Struct_BMI088_Attitude_Frame &__Next);
 
     void BMI088_Recover_SPI(uint8_t __Reason);
     /** 软恢复：只清 HAL 的错误码，不做 abort、不碰 DMA（理由见 .cpp 注释） */

@@ -950,7 +950,51 @@ void Class_BMI088::Calculate()
     Vector_Accel = Matrix_Rotation * Vector_Accel_Body;
     Vector_Gyro_Body = Filter_VQF.Get_Last_Corrected_Gyro();
     Vector_Gyro = Matrix_Rotation * Vector_Gyro_Body;
+
+    /* ── 整帧发布 ──
+     * 用本轮算出的局部结果一次组帧、一次提交（详见结构体注释）：
+     * 消费者拿到的一定是同一帧的四元数 + 欧拉角 + 原始量，
+     * 不会出现"第 N 帧四元数配第 N-1 帧欧拉角"的半帧组合。 */
+    Struct_BMI088_Attitude_Frame frame = {};
+    frame.Quaternion     = Quarternion;
+    frame.Euler_Angle    = Vector_Euler_Angle;
+    frame.Gyro_Bias      = Filter_VQF.Get_Bias_Estimate();
+    frame.Gyro           = Vector_Original_Gyro;
+    frame.Accel          = Vector_Original_Accel;
+    frame.Sample_Time_Us = gyro_sample.Timestamp_Us;
+    frame.Rest_Detected  = Filter_VQF.Get_Rest_Detected() ? 1U : 0U;
+    frame.Valid          = true;
+    Publish_Attitude_Frame(frame);
+
     Calculating_Time = Sys_Get_Micros() - calculate_start_timestamp;
+}
+
+/**
+ * @brief 整帧提交（生产者侧，只在 Calculate() 收尾调用）
+ *
+ * @note  关中断同时也挡住任务切换（PendSV），所以提交过程对任务上下文
+ *        是原子的；读者（Get_Attitude_Frame）同样在关中断窗口里取，
+ *        两边合起来保证"整帧"语义。
+ */
+void Class_BMI088::Publish_Attitude_Frame(const Struct_BMI088_Attitude_Frame &__Next)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    Attitude_Frame = __Next;
+    Attitude_Frame.Sequence = ++Attitude_Sequence;   /* 序号在提交时分配，保证单调 */
+    __DMB();
+    __set_PRIMASK(primask);
+}
+
+bool Class_BMI088::Get_Attitude_Frame(Struct_BMI088_Attitude_Frame &__Out) const
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    __Out = Attitude_Frame;
+    const bool valid = __Out.Valid;
+    __DMB();
+    __set_PRIMASK(primask);
+    return valid;
 }
 
 /**

@@ -32,6 +32,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /** 姿态输出结构。除三轴姿态外，另带两项 VQF 独有的诊断量：零偏估计和静止标志 */
 typedef struct
@@ -46,14 +47,31 @@ typedef struct
 
     float GyroBias[3];   /**< ★ 在线估计的陀螺零偏 rad/s —— 持续跟踪温漂的关键 */
     uint8_t Rest_Detected;  /**< ★ 静止检测标志（判定静止时，零偏修正权重最高） */
+
+    /* ── 新鲜度：跨任务读姿态必须看这三项 ── */
+    uint64_t Sample_Time_Us; /**< 本帧对应的【陀螺样本时刻】，不是"现在" */
+    uint32_t Sequence;       /**< 发布序号，每产出新一帧 +1（判断有没有新帧） */
+    uint8_t  Valid;          /**< 1 = 确实产出了结果；IMU 未初始化 / 没数据时为 0 */
 } Struct_Attitude;
 
 extern Struct_Attitude Attitude;
 
-/* 并发契约：唯一写者是 1ms 任务的 Attitude_Task()；当前读者（波形输出）
- * 也在同一任务里，直读安全。将来跨任务读（控制环 / 上位机）时，
- * 单个 float 的原子性不能保证你拿到一组【同一拍】的数据 ——
- * 那时要么复制一份再用，要么把读也放进 1ms 任务。 */
+/**
+ * @brief 整帧复制最近一帧姿态（★ 跨任务读姿态统一走这里）
+ *
+ * @note  为什么不能直接读全局 Attitude：它由 1ms 任务逐项更新，
+ *        别的任务直读会拿到"半帧"（比如新的四元数配上旧的欧拉角）。
+ *        本函数在关中断窗口内把整帧一次拷走（同时也挡住任务切换），
+ *        保证 Out 里所有字段来自同一帧。
+ *
+ *        数据是否可用看 Out->Valid；数据有多新，用 Out 里的
+ *        Sample_Time_Us 与调用时刻的 Sys_Get_Micros() 相减判断，
+ *        或比对 Sequence 有没有变化。
+ *
+ * @param Out 复制结果
+ * @return Out->Valid
+ */
+bool Attitude_Get_Snapshot(Struct_Attitude *Out);
 
 /**
  * @brief 初始化姿态解算（SPI 层 + VQF 参数 + BMI088 硬件）
