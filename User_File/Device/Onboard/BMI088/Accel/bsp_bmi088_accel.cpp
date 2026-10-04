@@ -1,6 +1,6 @@
 /**
  * @file    bsp_bmi088_accel.cpp
- * @brief   BMI088 加速度计实现（温度读取保留，温控已移除）
+ * @brief   BMI088 加速度计实现（数据读取 + 温度读取 + TIM10 恒温控制）
  *
  * @note    来源：H7_BSP（USTC-RoboWalker / yssickjgd）。
  *          移植改动清单见 bsp_bmi088_accel.h 顶部注释。

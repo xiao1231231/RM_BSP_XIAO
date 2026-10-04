@@ -2,8 +2,10 @@
  * @file    alg_filter_iir.h
  * @brief   一阶 IIR 低通滤波器
  *
- * @note    来源：H7_BSP（USTC-RoboWalker / zzm），只保留了 PID 库依赖的一阶低通
- *          （二阶陷波/低通未移植——本工程暂时没有用例，要用再从上游摘）。
+ * @note    来源：H7_BSP（USTC-RoboWalker / zzm）。一阶低通被 PID 的 D 支路
+ *          使用；二阶低通/陷波类在 alg_filter_iir.cpp 里【已存在】，只是目前
+ *          没有调用方（未引用会被链接器裁掉，不占 Flash），留给将来
+ *          机械共振（陷波）或数据平滑（二阶低通）用。
  *
  *          匹配极点法离散化：
  *            y[k] = y[k-1] + α·(x[k] - y[k-1])

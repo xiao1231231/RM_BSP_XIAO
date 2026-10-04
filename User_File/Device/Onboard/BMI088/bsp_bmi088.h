@@ -14,8 +14,8 @@
  * ── 相对 H7 原版的移植改动 ──────────────────────────────────────────
  *   ① SPI2 → SPI1；片选/中断脚换成 C 板的 CS1_ACCEL(PA4)/CS1_GYRO(PB0)、
  *      INT1_Accel(PC4)/INT1_Gyro(PC5)
- *   ② 温控未移植：`BMI088_Accel.Init(true)` → `Init()`，
- *      128ms 回调里的加热 PID 调用已删除
+ *   ② 温控方案不照 H7（他们带电池电压补偿），照 basic_framework（C 板官方）：
+ *      TIM10_CH1 = PF6 加热 PWM，500Hz，参数与说明见 bsp_bmi088_accel.h
  *   ③ 板级标定常量：**数据换成本板的（留空 = 不修正）**，理由见类内注释
  *   ④ 任务句柄对齐本工程 CubeMX 生成的名字 BMI088Handle
  *   ⑤ 时间戳接口对齐 Sys_Get_Micros()

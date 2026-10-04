@@ -11,7 +11,9 @@ extern "C" {
 /**
  * @brief 集中分发 HAL 回调
  * @note  本文件【只做转发】，不含任何业务逻辑。
- *        所有 HAL 的 __weak 回调都在这里被覆盖，然后转给对应的 BSP 层。
+ *        UART / CAN / EXTI 的 HAL __weak 回调在这里覆盖，转给对应 BSP 层。
+ *        另有两处历史分工：SPI 的完成/错误回调实现在 bsp_spi.cpp（它要操作
+ *        本层的事务状态），TIM 的周期回调实现在 main.c（转发给 1ms 任务）。
  */
 void System_Callback_Init(void);
 

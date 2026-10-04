@@ -62,7 +62,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
         # ── BMI088 驱动（移植自 H7_BSP / USTC-RoboWalker）──
         # 结构：Gyro（FIFO 读取 + 时间戳重建 + 样本队列）
-        #       Accel（数据 + 温度读取，温控本轮未移植）
+        #       Accel（数据 + 温度读取 + TIM10 恒温 PWM）
         #       顶层 bsp_bmi088（三路状态机 + SPI 恢复 + VQF 姿态解算）
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Onboard/BMI088/Gyro/bsp_bmi088_gyro.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Onboard/BMI088/Accel/bsp_bmi088_accel.cpp
@@ -70,8 +70,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
         # ── 姿态解算层 ──
         # sys_attitude: BMI088 初始化 + VQF 姿态滤波（含在线零偏估计）
-        # alg_matrix_cmsis_compat: 只实现被用到的 8 个矩阵/三角函数，
-        #                          替代整个 CMSIS-DSP —— VQF 依赖它
+        # alg_matrix_cmsis_compat: 只转发 arm_sin/cos 两个三角函数
+        #                          （替代整个 CMSIS-DSP —— VQF 依赖它）
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/Matrix/alg_matrix_cmsis_compat.c
         ${CMAKE_CURRENT_LIST_DIR}/User_File/System/INS/sys_attitude.cpp
 

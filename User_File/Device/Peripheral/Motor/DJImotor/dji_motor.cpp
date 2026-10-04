@@ -48,9 +48,17 @@ Class_DJI_Motor *DJI_Motor_Create(Enum_DJI_Motor_Num Motor_Num,
     motor->Init(motor_can_handle, motor_id, K_P, K_I, K_D);
     motors[motor_id - 1] = motor;
 
-    /* 向 bsp_can 注册本电机的反馈帧（0x201 ~ 0x204） */
-    CAN_Register_Device(motor_can_handle, 0x200U + motor_id, motor,
-                        Motor_Feedback_Callback);
+    /* 向 bsp_can 注册本电机的反馈帧（0x201 ~ 0x204）。
+     * ★ 注册失败必须回滚并报错：否则会拿到"对象存在、能发指令、
+     *   却永远收不到反馈"的半初始化电机 —— 速度环拿冻结的转速去闭环，
+     *   症状离案发现场十万八千里，极难排查。 */
+    if (!CAN_Register_Device(motor_can_handle, 0x200U + motor_id, motor,
+                             Motor_Feedback_Callback))
+    {
+        motors[motor_id - 1] = nullptr;
+        used[slot] = false;
+        return nullptr;
+    }
     return motor;
 }
 
