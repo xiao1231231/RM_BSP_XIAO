@@ -41,6 +41,7 @@ Class_DJI_Motor *DJI_Motor_Create(Enum_DJI_Motor_Num Motor_Num,
     {
         if (!used[slot]) { break; }
     }
+    if (slot == DJI_MOTOR_CNT) { return nullptr; }   /* 满池：不许越界写 pool[8] */
 
     Class_DJI_Motor *motor = &pool[slot];
     used[slot] = true;

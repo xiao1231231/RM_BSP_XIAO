@@ -26,15 +26,16 @@ extern "C" void BMI088_Task(void *argument)
 {
     (void)argument;
 
-    /* ★ 本工程【不】像上游那样把优先级提到 High2，保持 CubeMX 配的 Normal。
+    /* ★ 本任务保持 CubeMX 配置的 Normal（freertos.c：.priority = osPriorityNormal），
+     *   【不】像上游那样把优先级提到 High2。
      *
      *   上游提优先级是为了降低 FIFO 排队延迟；但那会让本任务在"有样本要算"时
      *   完全压住 1ms 任务，而每次唤醒它会把队列里的样本一口气算完（每帧 ~155µs），
      *   连着 3~4 帧就是半毫秒的独占 → 1ms 任务被推迟 → 丢拍。
      *   实测：提优先级时 overrun 涨到 ~45% 的节拍。
      *   与 1ms 任务同级（Normal）时，FreeRTOS 按节拍在两者间轮转，两边都能按时跑；
-     *   多出来的那点延迟由陀螺 FIFO（99 帧 ≈ 50ms）吸收，完全不影响姿态质量。 */
-    (void)osThreadSetPriority(osThreadGetId(), osPriorityNormal);
+     *   多出来的那点延迟由陀螺 FIFO（99 帧 ≈ 50ms）吸收，完全不影响姿态质量。
+     *   ⚠️ 若在 CubeMX 里改本任务优先级，必须 ≤ Normal（理由同上）。 */
 
     for (;;)
     {

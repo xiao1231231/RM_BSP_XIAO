@@ -51,8 +51,10 @@ void BSP_CAN_RxFifo0Callback(CAN_HandleTypeDef *hcan);
  */
 void BSP_CAN_Service_PeriodElapsedCallback(CAN_HandleTypeDef *hcan);
 
-/* ── 总线健康（调试器里看；正常时 can_bus_off_count 恒为 0） ── */
+/* ── 总线健康（调试器里看；正常时三个计数都恒为 0） ── */
 extern volatile uint32_t can_bus_off_count;     /* bus-off 进入次数 */
-extern volatile uint32_t can_last_lec;          /* 最近一次总线错误原因，含义见 .cpp */
+extern volatile uint32_t can_last_lec;          /* 最近一次总线错误原因 —— LEC 粘滞，
+                                                   硬件不清零，读到的是"自上电以来最近一次" */
+extern volatile uint32_t can_tx_drop_count;     /* 三邮箱全满被放弃的发送次数（>0 = 拥塞/掉线） */
 
 #endif /* BSP_CAN_H */

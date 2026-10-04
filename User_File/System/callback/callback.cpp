@@ -64,6 +64,12 @@ extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
  * bsp_spi 层每收完一笔就回调这里 —— ★ 运行在 DMA 完成中断上下文。
  * 按"这一笔的片选是谁"分发给对应器件（SPI 是共享总线，必须靠片选区分），
  * 之后由 bsp_bmi088 里的回调去解析数据、置状态、唤醒 BMI088_Task。
+ *
+ * ⚠️ 依赖 bsp_spi 的一条顺序契约：回调执行期间 CS 电平已经拉回、
+ *    但 Activate_GPIOx 字段【还没清】—— 要等回调返回后的
+ *    SPI_Release_Transaction() 才清（见 bsp_spi.cpp TxRxCplt 的注释）。
+ *    下面的分发正是靠读这个字段认路；若有人把 Release 提到回调之前，
+ *    分发会静默失效（所有数据无人认领），且编译期看不出任何问题。
  */
 extern "C" void SPI1_Callback(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer, uint16_t Tx_Length, uint16_t Rx_Length)
 {
@@ -104,9 +110,9 @@ extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     BSP_CAN_RxFifo0Callback(hcan);
 }
 
-/* ── 后面几章的回调加在这里，同样【每一个】都要 extern "C" ──
- * 第 09 章：HAL_ADC_ConvCpltCallback()          （ADC 采样完成）
- * （第 05 章 CAN 的收报回调已经在上面了；BMI088 的 SPI/EXTI 也已经在了）
+/* ── 以后新增外设的回调加在这里，同样【每一个】都要 extern "C" ──
+ * 已有的：UART ×3（上面）、CAN 收报、BMI088 的 SPI / EXTI。
+ * 将来可能的：HAL_ADC_ConvCpltCallback()（ADC 采样完成）等。
  */
 
 extern "C" void System_Callback_Init(void)

@@ -28,6 +28,7 @@ extern "C" void TIM_1ms_Task(void *argument)
      * osDelay(1) 的唤醒时刻会累积执行时间误差 */
     uint32_t wake = osKernelGetTickCount();
     uint32_t blink_div = 0;
+    uint32_t heat_div = 0;
     uint32_t attitude_div = 0;
     uint32_t wave_div = 0;
     bool led_mode = false;
@@ -36,6 +37,11 @@ extern "C" void TIM_1ms_Task(void *argument)
 
     for (;;)
     {
+        /* 时间基保活：Sys_Get_Micros 的 64 位累加依赖"至少每 25.57s 被调一次"
+         * （CYCCNT 回绕周期）。它的其它调用点全在 IMU/串口的回调链里 ——
+         * IMU 初始化失败时那些路径全部不可达，只有这里是无条件执行的。 */
+        (void)Sys_Get_Micros();
+
         task_period_s = Sys_Get_DeltaTime(&last_cycle);
 
         /* IMU：1ms 服务（兜底轮询 + 传输调度 + 超时恢复）、
@@ -43,7 +49,6 @@ extern "C" void TIM_1ms_Task(void *argument)
         BMI088_TIM_1ms_Service_PeriodElapsedCallback();
 
         /* 恒温 500Hz（C 板官方工程同款周期） */
-        static uint32_t heat_div = 0;
         if (++heat_div >= 2U)
         {
             heat_div = 0;
@@ -67,7 +72,7 @@ extern "C" void TIM_1ms_Task(void *argument)
         /* DJI 电机：速度环 + 分组发送，1kHz */
         DJI_Motor_Control_Task();
 
-        /* 绿灯 500ms 闪烁 */
+        /* 绿灯 500ms 闪烁，用于观察程序是否正常运行 */
         if (++blink_div >= 500)
         {
             blink_div = 0;
@@ -78,6 +83,7 @@ extern "C" void TIM_1ms_Task(void *argument)
 
         /* 三轴姿态 + 恒温观测，50Hz
          * 通道：roll, pitch, yaw, temp(°C), heat_pwm(0~9999) */
+        //待打包成弧度制去调参
         if (++wave_div >= 20U)
         {
             wave_div = 0;

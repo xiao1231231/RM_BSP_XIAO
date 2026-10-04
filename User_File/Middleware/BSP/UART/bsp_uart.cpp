@@ -1,6 +1,6 @@
 #include "bsp_uart.h"
 
-#include "sys_timestamp.h"      /* Sys_Get_Micros() —— 依赖第 02 章 */
+#include "sys_timestamp.h"      /* Sys_Get_Micros() —— 给收到的一帧打时间戳 */
 #include <string.h>             /* memcpy */
 
 /* ── 本工程用到的串口管理对象 ──
@@ -98,20 +98,37 @@ uint8_t UART_Transmit_Data(UART_HandleTypeDef *huart, uint8_t *Data, uint16_t Le
 
     if (huart->hdmatx != NULL)
     {
-        /* 上一次 DMA 还没发完 → 返回忙，不覆盖正在发送的内容 */
-        if (obj->Tx_Submitting) { return HAL_BUSY; }
+        /* ★ 查忙 → 拷贝 → 置位 必须在同一个关中断窗口里完成。
+         *   契约承诺"任务和中断里都能调"（sys_debug.h），两个上下文可能并发进来：
+         *   A 查完忙、还没拷完就被 B（比如中断里的发送）抢占 —— B 整套跑完、
+         *   DMA 开始读 Tx_Buffer；A 恢复后 memcpy 覆盖正在被读的缓冲，
+         *   线上出现撕裂帧，且无报错无计数。
+         *   窗口内只有 ≤128 字节的 memcpy 和 DMA 寄存器配置（~1µs 量级），
+         *   关中断代价可忽略；DMA 启动期间的中断只是挂起，恢复后照常触发。 */
+        const uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+
+        if (obj->Tx_Submitting)
+        {
+            __set_PRIMASK(primask);
+            return HAL_BUSY;
+        }
 
         /* 拷贝到专用发送缓冲：函数返回后调用方即可复用源数据。
          * F407 没有 D-Cache，拷完直接启动 DMA 即可，不需要任何 Cache 维护。 */
         memcpy(obj->Tx_Buffer, Data, Length);
         obj->Tx_Submitting = true;
 
-        if (HAL_UART_Transmit_DMA(huart, obj->Tx_Buffer, Length) != HAL_OK)
+        /* HAL 调用也放进窗口：置位/启动/失败回滚成为原子事件，
+         * 不存在"标志已置、DMA 却没启动"的中间态 */
+        const HAL_StatusTypeDef status = HAL_UART_Transmit_DMA(huart, obj->Tx_Buffer, Length);
+        if (status != HAL_OK)
         {
             obj->Tx_Submitting = false;
-            return HAL_ERROR;
         }
-        return HAL_OK;
+
+        __set_PRIMASK(primask);
+        return (uint8_t)status;
     }
 
     /* 没配 TX DMA 的串口：本工程 USART1 / USART6 都配了 TX DMA，走不到这里。

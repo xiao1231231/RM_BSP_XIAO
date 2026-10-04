@@ -3,7 +3,8 @@
 #include "tim.h"
 #include "sys_timestamp.h"
 
-//定时器计数时钟
+//定时器计数时钟：84MHz / (Prescaler+1) = 84 / 84 = 1MHz
+//★ 依赖 CubeMX 里 TIM4 的 Prescaler = 83 —— 改时钟树或分频时这里必须同步改
 #define BUZZER_TIMER_CLK_HZ    1000000U
 
 //频率限幅

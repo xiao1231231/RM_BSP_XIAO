@@ -24,6 +24,7 @@ static volatile uint8_t can_device_count = 0;
 /* ── 总线健康 ── */
 volatile uint32_t can_bus_off_count = 0;
 volatile uint32_t can_last_lec = 0;
+volatile uint32_t can_tx_drop_count = 0;
 static bool can_in_bus_off = false;
 
 bool CAN_Init(CAN_HandleTypeDef *hcan)
@@ -103,6 +104,9 @@ bool CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Tx_ID,
     }
     if (HAL_CAN_GetTxMailboxesFreeLevel(hcan) == 0U)   /* 3 个邮箱全在飞 */
     {
+        /* 观测点：正常时应恒不涨。持续上涨 = 总线拥塞 / 没接电调 /
+         * 接线接触不良 —— 之前这里静默返回 false，发送侧零痕迹可查 */
+        can_tx_drop_count++;
         return false;
     }
 
@@ -182,7 +186,8 @@ void BSP_CAN_Service_PeriodElapsedCallback(CAN_HandleTypeDef *hcan)
     }
     can_in_bus_off = bus_off_now;
 
-    /* LEC = 最近一次总线错误的原因：
+    /* LEC = 最近一次总线错误的原因（★ 粘滞位：硬件不清零，读到的是
+     *   自上电以来最近一次，不代表"此刻正在错"）：
      *   1=位填充 2=格式 3=ACK 4=隐性位 5=显性位 6=CRC
      * 最常见的是 3（ACK 错）：总线上没有第二个节点应答 ——
      * 电调没上电、线没接、终端电阻缺失，都会报这个。 */

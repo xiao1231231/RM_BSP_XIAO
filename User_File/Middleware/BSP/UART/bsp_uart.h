@@ -91,7 +91,7 @@ void BSP_UART_ErrorCallback(UART_HandleTypeDef *huart);
 
 /**
  * @brief 接收看门狗：检查是否有串口"接收停了"，是则重启
- * @note  需要周期调用（第 03 章从主循环调，第 11 章改由 1ms 任务调）
+ * @note  需要周期调用 —— 由 1ms 任务每拍调一次
  */
 void BSP_UART_Recover_PeriodElapsedCallback(void);
 
