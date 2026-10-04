@@ -3,20 +3,27 @@
 #include "sys_timestamp.h"      /* Sys_Get_Micros() —— 给收到的一帧打时间戳 */
 #include <string.h>             /* memcpy */
 
-/* ── 本工程用到的串口管理对象 ──
- * 全局静态存储：不 malloc、地址编译期确定、调试器里能按名字直接看。 */
-struct Struct_UART_Manage_Object USART1_Manage_Object;
-struct Struct_UART_Manage_Object USART6_Manage_Object;
+/* ── 串口管理对象池 ──
+ * 所有串口对象收在这里，UART_Init 时登记；实例映射和接收看门狗都遍历这个池。
+ * 以前"对象定义 / 映射 if / 看门狗数组 / extern"要登记 4 处，漏任何一处都是
+ * 编译照过、运行静默失效 —— 现在收敛成"只在 UART_Init 登记"这一个入口。 */
+#define UART_PORT_MAX 4                 /* USART1 / USART6 / USART3(DBUS) + 富余 */
+static struct Struct_UART_Manage_Object uart_pool[UART_PORT_MAX];
+static uint8_t uart_registered = 0;     /* 只在调度器启动前写（System_Init），之后只读 */
 
 /**
- * @brief 句柄 → 管理对象 的映射
- * @note  加新串口时在这里加一行（后面加 USART3 做 DBUS）
+ * @brief 句柄 → 管理对象：遍历登记表比对 Instance
  */
 static struct Struct_UART_Manage_Object *uart_get_object(UART_HandleTypeDef *huart)
 {
-    if (huart == NULL)             { return NULL; }
-    if (huart->Instance == USART1) { return &USART1_Manage_Object; }
-    if (huart->Instance == USART6) { return &USART6_Manage_Object; }
+    if (huart == NULL) { return NULL; }
+    for (uint8_t i = 0; i < uart_registered; i++)
+    {
+        if (uart_pool[i].UART_Handler->Instance == huart->Instance)
+        {
+            return &uart_pool[i];
+        }
+    }
     return NULL;
 }
 
@@ -69,11 +76,18 @@ static bool uart_start_receive(struct Struct_UART_Manage_Object *obj)
     return true;
 }
 
+/**
+ * @brief 初始化一个串口：登记进对象池、绑定回调、启动 DMA+IDLE 接收
+ * @param huart    CubeMX 生成的句柄（如 &huart1）
+ * @param Callback 接收完成回调，可为 NULL（只需发送时）
+ * @note  重复初始化同一路 / 池满都会被忽略（调度器启动前调用，无并发问题）
+ */
 void UART_Init(UART_HandleTypeDef *huart, UART_Callback Callback)
 {
-    struct Struct_UART_Manage_Object *obj = uart_get_object(huart);
-    if (obj == NULL) { return; }
+    if (huart == NULL || uart_registered >= UART_PORT_MAX) { return; }
+    if (uart_get_object(huart) != NULL) { return; }     /* 同一路只登记一次 */
 
+    struct Struct_UART_Manage_Object *obj = &uart_pool[uart_registered++];
     obj->UART_Handler       = huart;
     obj->Callback_Function  = Callback;
     obj->Rx_Buffer_Active   = obj->Rx_Buffer_0;
@@ -211,14 +225,10 @@ void BSP_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
 void BSP_UART_Recover_PeriodElapsedCallback(void)
 {
-    /* 加新串口时往这个数组加一项 */
-    struct Struct_UART_Manage_Object *objs[] = { &USART1_Manage_Object,
-                                                 &USART6_Manage_Object };
-
-    for (uint32_t i = 0; i < sizeof(objs) / sizeof(objs[0]); i++)
+    /* 遍历登记池：UART_Init 过的串口自动纳入看门狗覆盖，无需再手动登记 */
+    for (uint8_t i = 0; i < uart_registered; i++)
     {
-        struct Struct_UART_Manage_Object *obj = objs[i];
-        if (obj->UART_Handler == NULL) { continue; }
+        struct Struct_UART_Manage_Object *obj = &uart_pool[i];
         if (!obj->Rx_Restart_Pending)  { continue; }
 
         /* 只有 HAL 把状态放开（READY）才能重启，否则返回 HAL_BUSY */

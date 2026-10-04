@@ -314,8 +314,11 @@ extern "C" void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 
     if (manage_object->Callback_Function != nullptr)
     {
+        /* 片选作为参数传出去（值拷贝）：回调想什么时候用都行，
+         * 与下面 Release 何时清字段不再有任何关系 */
         manage_object->Callback_Function(manage_object->Tx_Buffer, manage_object->Rx_Buffer,
-                                         manage_object->Tx_Buffer_Length, manage_object->Rx_Buffer_Length);
+                                         manage_object->Tx_Buffer_Length, manage_object->Rx_Buffer_Length,
+                                         manage_object->Activate_GPIOx, manage_object->Activate_GPIO_Pin);
     }
 
     /* ★ 事务锁在【回调返回之后】才释放：本层的约定是"回调里只置标志/唤醒任务，

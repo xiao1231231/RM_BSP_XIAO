@@ -131,7 +131,8 @@ public:
     /** 解算一帧（从陀螺样本队列取一个样本，跑一次 VQF）——由 BMI088_Task 调用 */
     void Calculate();
 
-    void SPI_RxCpltCallback();
+    /** SPI 收完一笔时由上层分发进来（片选来自回调参数，不读全局对象） */
+    void SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin);
     void EXTI_Flag_Callback(uint16_t __GPIO_Pin);
     void TIM_128ms_Calculate_PeriodElapsedCallback();
     void TIM_1ms_Service_PeriodElapsedCallback();

@@ -324,9 +324,9 @@ bool Class_BMI088::Init()
  * @note  ★ 这里【只解析、只置标志、只唤醒任务】，绝不发起下一笔传输 ——
  *        在 DMA 完成中断里再起一笔 DMA 会有竞态。下一笔由 EXTI / 1ms / 任务发起。
  */
-void Class_BMI088::SPI_RxCpltCallback()
+void Class_BMI088::SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
 {
-    if (SPI_Manage_Object->Activate_GPIOx == CS1_ACCEL_GPIO_Port && SPI_Manage_Object->Activate_GPIO_Pin == CS1_ACCEL_Pin)
+    if (CS_Port == CS1_ACCEL_GPIO_Port && CS_Pin == CS1_ACCEL_Pin)
     {
         if (Init_Finished_Flag)
         {
@@ -372,7 +372,7 @@ void Class_BMI088::SPI_RxCpltCallback()
             }
         }
     }
-    else if (SPI_Manage_Object->Activate_GPIOx == CS1_GYRO_GPIO_Port && SPI_Manage_Object->Activate_GPIO_Pin == CS1_GYRO_Pin)
+    else if (CS_Port == CS1_GYRO_GPIO_Port && CS_Pin == CS1_GYRO_Pin)
     {
         if (Init_Finished_Flag &&
             (!Gyro_Status.Transfering_Flag ||

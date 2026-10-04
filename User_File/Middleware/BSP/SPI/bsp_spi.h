@@ -34,8 +34,16 @@
 
 /* Exported types ------------------------------------------------------------*/
 
-/** 一次收发完成后的回调：参数指向本层内部的 Tx/Rx 缓冲区 */
-typedef void (*SPI_Callback)(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer, uint16_t Tx_Length, uint16_t Rx_Length);
+/**
+ * 一次收发完成后的回调
+ * @note  Tx/Rx 指针指向本层内部缓冲区，回调返回后即可能被下一笔覆盖（要留存自己拷贝）。
+ *        CS_Port / CS_Pin 是【这一笔传输】的片选（值拷贝）—— 收方靠它认"数据是谁的"，
+ *        不必再读管理对象里"最后一次传输的片选"字段，因此分发与
+ *        "对象字段何时清空"彻底解耦。
+ */
+typedef void (*SPI_Callback)(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer,
+                             uint16_t Tx_Length, uint16_t Rx_Length,
+                             GPIO_TypeDef *CS_Port, uint16_t CS_Pin);
 
 /** 一路 SPI 的管理对象 */
 struct Struct_SPI_Manage_Object

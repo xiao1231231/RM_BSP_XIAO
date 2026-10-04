@@ -59,9 +59,9 @@ struct Struct_UART_Manage_Object
     volatile bool Tx_Submitting;    /* 中断里清零，主循环里读 */
 };
 
-/* 本工程用到的串口实例（加新串口时在这里加一行） */
-extern struct Struct_UART_Manage_Object USART1_Manage_Object;
-extern struct Struct_UART_Manage_Object USART6_Manage_Object;
+/* 串口管理对象全部收在 bsp_uart.cpp 内部的静态池里（UART_Init 时登记），
+ * 外部只通过 UART_Init / UART_Transmit_Data / 接收回调使用，不直接碰对象。
+ * 加一路串口 = 在 system_init 里多调一次 UART_Init，别处零改动。 */
 
 /**
  * @brief 初始化一个串口：绑定回调、切到第一块缓冲、启动 DMA+IDLE 接收

@@ -62,28 +62,23 @@ extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 /* ══════════════ SPI：BMI088 ══════════════
  *
  * bsp_spi 层每收完一笔就回调这里 —— ★ 运行在 DMA 完成中断上下文。
- * 按"这一笔的片选是谁"分发给对应器件（SPI 是共享总线，必须靠片选区分），
+ * 分发只看回调参数里带的片选（这一笔传输是谁的），不读任何全局对象 ——
+ * 与 bsp_spi 内部"事务字段何时清空"的顺序彻底无关。
  * 之后由 bsp_bmi088 里的回调去解析数据、置状态、唤醒 BMI088_Task。
- *
- * ⚠️ 依赖 bsp_spi 的一条顺序契约：回调执行期间 CS 电平已经拉回、
- *    但 Activate_GPIOx 字段【还没清】—— 要等回调返回后的
- *    SPI_Release_Transaction() 才清（见 bsp_spi.cpp TxRxCplt 的注释）。
- *    下面的分发正是靠读这个字段认路；若有人把 Release 提到回调之前，
- *    分发会静默失效（所有数据无人认领），且编译期看不出任何问题。
  */
-extern "C" void SPI1_Callback(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer, uint16_t Tx_Length, uint16_t Rx_Length)
+extern "C" void SPI1_Callback(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer,
+                              uint16_t Tx_Length, uint16_t Rx_Length,
+                              GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
 {
     (void)Tx_Buffer;
     (void)Rx_Buffer;
     (void)Tx_Length;
     (void)Rx_Length;
 
-    if ((SPI1_Manage_Object.Activate_GPIOx == CS1_ACCEL_GPIO_Port &&
-         SPI1_Manage_Object.Activate_GPIO_Pin == CS1_ACCEL_Pin) ||
-        (SPI1_Manage_Object.Activate_GPIOx == CS1_GYRO_GPIO_Port &&
-         SPI1_Manage_Object.Activate_GPIO_Pin == CS1_GYRO_Pin))
+    if ((CS_Port == CS1_ACCEL_GPIO_Port && CS_Pin == CS1_ACCEL_Pin) ||
+        (CS_Port == CS1_GYRO_GPIO_Port  && CS_Pin == CS1_GYRO_Pin))
     {
-        BSP_BMI088.SPI_RxCpltCallback();
+        BSP_BMI088.SPI_RxCpltCallback(CS_Port, CS_Pin);
     }
 }
 
