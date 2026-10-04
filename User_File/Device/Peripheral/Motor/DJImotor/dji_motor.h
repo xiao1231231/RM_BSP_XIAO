@@ -6,6 +6,12 @@
  *            反馈 0x200+编号（0x201~），8 字节 = 角度/转速/电流/温度
  *            控制 0x200（1~4号）与 0x1FF（5~8号），8 字节 = 4 个 int16 电流
  *            电流指令 ±16384 ↔ ±20A；输出轴转速 = 转子转速 ÷ 19.2
+ *
+ *          反馈可用性契约：CAN 反馈由中断逐帧提交【整帧快照】（含接收时刻、
+ *          序号、是否收到过）；速度环每拍检查新鲜度 —— 没收到过反馈或超过
+ *          DJI_FEEDBACK_TIMEOUT_US 没更新，就输出零电流并清 PID 历史，
+ *          绝不拿冻结/全零的旧值闭环。跨上下文读反馈统一走
+ *          Get_Feedback_Snapshot()（整帧复制），不要直读内部对象。
  */
 
 #ifndef DJI_MOTOR_H
@@ -18,6 +24,10 @@
 #define DJI_ECD_ANGLE_COEF  0.043945f   /* 360 / 8192 */
 #define DJI_GEAR_RATIO      19.2f       /* 3508 减速比 */
 #define DJI_OUT_CURRENT_MAX 16384.0f    /* C620 电流指令限幅（±20A） */
+
+/** 反馈超时判定：超过这么久没收到新帧就判失联。
+ *  反馈名义 1kHz，5ms = 连丢 5 帧 —— 容纳总线抖动，又不至于拖太久。 */
+#define DJI_FEEDBACK_TIMEOUT_US 5000U
 
 /**
  * @brief 四个电机的编号（本车约定）
@@ -43,6 +53,21 @@ struct Struct_DJI_Motor_Measure
     float Total_Angle;              /* 多圈累计角度（度） */
 };
 
+/**
+ * @brief 一帧完整的电机反馈：测量值 + 新鲜度（语义同姿态整帧快照）
+ * @note  由 CAN 中断一次提交、读者一次复制，保证 Measure 里的每个字段
+ *        都来自同一帧反馈；Sequence 每帧 +1，Last_Rx_Time_Us 是接收时刻。
+ *        "创建成功"≠"电调在线"：Received == false 说明一帧都没收到过
+ *        （电调没上电 / ID 不对 / 线没接）。
+ */
+struct Struct_DJI_Motor_Feedback
+{
+    Struct_DJI_Motor_Measure Measure;
+    uint64_t Last_Rx_Time_Us = 0U;  /* 本帧接收时刻（Sys_Get_Micros） */
+    uint32_t Sequence = 0U;         /* 每收到一帧 +1 */
+    bool Received = false;          /* 是否至少收到过一帧 */
+};
+
 class Class_DJI_Motor
 {
 public:
@@ -57,7 +82,9 @@ public:
     /** 解析本电机的反馈帧（bsp_can 按 ID 分发进来，Data 恒 8 字节） */
     void Feedback_Parse(uint8_t *Data, uint16_t Length);
 
-    inline const Struct_DJI_Motor_Measure &Get_Measure() const { return Measure; }
+    /** 整帧复制最近反馈（返回 Received）。跨上下文读反馈只走这个接口 */
+    bool Get_Feedback_Snapshot(Struct_DJI_Motor_Feedback &__Out) const;
+
     inline float Get_Target_Speed_Rpm() const { return Target_Speed_Rpm; }
     inline int16_t Get_Out_Current() const { return Out_Current; }
     inline uint8_t Get_Motor_Id() const { return Motor_Id; }
@@ -65,11 +92,12 @@ public:
 protected:
     CAN_HandleTypeDef *CAN_Handler;
     uint8_t Motor_Id;               /* 1~8 */
-    Struct_DJI_Motor_Measure Measure = {};
+    /* 已提交的反馈整帧（CAN 中断写、任务读，两边都在短临界区里） */
+    Struct_DJI_Motor_Feedback Feedback = {};
+    uint16_t Last_Ecd = 0U;         /* 上一帧编码器值（算多圈增量） */
     Class_PID Speed_PID;
     float Target_Speed_Rpm = 0.0f;
     int16_t Out_Current = 0;
-    bool Ecd_Initialized = false;   /* 首帧只记基准，不算圈数增量 */
 };
 
 /** 绑定总线（system_init 里 CAN_Init 之后调一次） */

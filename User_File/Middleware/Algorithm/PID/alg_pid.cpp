@@ -41,6 +41,18 @@ void Class_PID::Init(const float &__K_P, const float &__K_I, const float &__K_D,
     }
 }
 
+void Class_PID::Reset()
+{
+    Integral_Error = 0.0f;
+    Pre_Now = 0.0f;
+    Pre_Target = 0.0f;
+    Pre_Out = 0.0f;
+    Pre_Error = 0.0f;
+    Out = 0.0f;
+    // D 支路历史一并归零：否则恢复后第一拍的 d_delta = error - 0 会形成 D 冲击
+    D_Filter.Reset(0.0f);
+}
+
 float Class_PID::Get_Target() const
 {
     return Target;

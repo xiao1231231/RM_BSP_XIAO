@@ -13,7 +13,8 @@ extern "C" {
  * @note  本文件【只做转发】，不含任何业务逻辑。
  *        UART / CAN / EXTI 的 HAL __weak 回调在这里覆盖，转给对应 BSP 层。
  *        另有两处历史分工：SPI 的完成/错误回调实现在 bsp_spi.cpp（它要操作
- *        本层的事务状态），TIM 的周期回调实现在 main.c（转发给 1ms 任务）。
+ *        本层的事务状态）；main.c 里的 TIM14 周期回调只是 HAL 时基
+ *        （HAL_IncTick）—— 1ms 任务由 RTOS 的 SysTick 节拍驱动，与它无关。
  */
 void System_Callback_Init(void);
 

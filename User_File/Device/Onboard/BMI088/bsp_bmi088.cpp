@@ -476,7 +476,7 @@ void Class_BMI088::TIM_1ms_Service_PeriodElapsedCallback()
 }
 
 /**
- * @brief 软恢复：只清掉 HAL 的错误码、把三路通道放回"就绪"，不做 abort、不碰 DMA
+ * @brief 软恢复：只清掉 HAL 的错误码。不做 abort、不碰 DMA、【不动】三路通道的状态标志
  *
  * @note  ★ 这是本工程相对上游 H7_BSP 的一处【策略改动】，依据是实测 + HAL 源码：
  *

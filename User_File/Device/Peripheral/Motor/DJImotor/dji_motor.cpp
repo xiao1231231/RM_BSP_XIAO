@@ -8,6 +8,8 @@
 
 #include "dji_motor.h"
 
+#include "sys_timestamp.h"      /* Sys_Get_Micros() —— 反馈新鲜度判定 */
+
 static CAN_HandleTypeDef *motor_can_handle = nullptr;
 static Class_DJI_Motor *motors[DJI_MOTOR_CNT] = {};   /* 下标 = 编号-1 */
 
@@ -80,8 +82,25 @@ void Class_DJI_Motor::Init(CAN_HandleTypeDef *hcan, uint8_t Motor_Id,
 
 void Class_DJI_Motor::Control()
 {
+    /* ── 反馈可用性检查：拿不到新鲜反馈就不闭环 ──
+     * 两种坏状态在这里统一拦截：
+     *   · 从没收到反馈（电调没上电 / ID 不对 / 线没接）→ 测量值全零
+     *   · 反馈停了（掉线 / 接触不良）→ 旧值冻结在最后一帧
+     * 两者都输出零电流（电机不带力，现象肉眼可见），同时清 PID 历史 ——
+     * 恢复后从零起步，不带陈旧积分。整车级联动停机是应用层的事。
+     * ★ 没有这段的话：速度环会拿冻结的转速当真，电流一路顶到限幅。 */
+    Struct_DJI_Motor_Feedback feedback;
+    const bool received = Get_Feedback_Snapshot(feedback);
+    if (!received ||
+        (Sys_Get_Micros() - feedback.Last_Rx_Time_Us) > DJI_FEEDBACK_TIMEOUT_US)
+    {
+        Out_Current = 0;
+        Speed_PID.Reset();      /* 每拍清，幂等；恢复瞬间无历史负担 */
+        return;
+    }
+
     Speed_PID.Set_Target(Target_Speed_Rpm);
-    Speed_PID.Set_Now(Measure.Speed_Rpm);
+    Speed_PID.Set_Now(feedback.Measure.Speed_Rpm);
     Speed_PID.TIM_Calculate_PeriodElapsedCallback();
     Out_Current = (int16_t)Speed_PID.Get_Out();
 }
@@ -90,22 +109,48 @@ void Class_DJI_Motor::Feedback_Parse(uint8_t *Data, uint16_t Length)
 {
     if (Length != 8) { return; }
 
-    const uint16_t last_ecd = Measure.Ecd;
-    Measure.Ecd            = (uint16_t)(Data[0] << 8 | Data[1]);
+    /* 以已提交的帧为底，在栈上把这一帧凑齐再整体提交 ——
+     * 读者拿到的 Measure 各字段保证来自同一次 CAN 反馈 */
+    Struct_DJI_Motor_Feedback frame = Feedback;
+    const uint16_t ecd      = (uint16_t)(Data[0] << 8 | Data[1]);
     const int16_t rotor_rpm = (int16_t)(Data[2] << 8 | Data[3]);
-    Measure.Torque_Current = (int16_t)(Data[4] << 8 | Data[5]);
-    Measure.Temperature    = Data[6];
-    Measure.Speed_Rpm      = (float)rotor_rpm / DJI_GEAR_RATIO;
+    frame.Measure.Ecd            = ecd;
+    frame.Measure.Torque_Current = (int16_t)(Data[4] << 8 | Data[5]);
+    frame.Measure.Temperature    = Data[6];
+    frame.Measure.Speed_Rpm      = (float)rotor_rpm / DJI_GEAR_RATIO;
 
-    /* 多圈累计：8192 过零判向（350→10 是正转过零，10→350 是反转过零） */
-    if (Ecd_Initialized)
+    /* 多圈累计：8192 过零判向（350→10 是正转过零，10→350 是反转过零）。
+     * 首帧只记基准，不算圈数增量 */
+    if (frame.Received)
     {
-        int32_t delta = (int32_t)Measure.Ecd - (int32_t)last_ecd;
+        int32_t delta = (int32_t)ecd - (int32_t)Last_Ecd;
         if (delta > 4096)       { delta -= 8192; }
         else if (delta < -4096) { delta += 8192; }
-        Measure.Total_Angle += (float)delta * DJI_ECD_ANGLE_COEF;
+        frame.Measure.Total_Angle += (float)delta * DJI_ECD_ANGLE_COEF;
     }
-    Ecd_Initialized = true;
+    Last_Ecd = ecd;
+
+    frame.Last_Rx_Time_Us = Sys_Get_Micros();
+    frame.Received        = true;
+
+    /* 短临界区整帧提交（本函数在 CAN 中断里跑；primask 保存恢复支持嵌套） */
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    frame.Sequence = Feedback.Sequence + 1U;    /* 序号在提交时分配，保证单调 */
+    Feedback = frame;
+    __DMB();
+    __set_PRIMASK(primask);
+}
+
+bool Class_DJI_Motor::Get_Feedback_Snapshot(Struct_DJI_Motor_Feedback &__Out) const
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    __Out = Feedback;
+    const bool received = __Out.Received;
+    __DMB();
+    __set_PRIMASK(primask);
+    return received;
 }
 
 void DJI_Motor_Control_Task()

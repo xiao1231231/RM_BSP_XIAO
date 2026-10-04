@@ -55,6 +55,11 @@ public:
      */
     void Init(const float &__K_P, const float &__K_I, const float &__K_D, const float &__K_F = 0.0f, const float &__I_Out_Max = 0.0f, const float &__Out_Max = 0.0f, const float &__D_T = 0.001f, const float &__Dead_Zone = 0.0f, const float &__I_Variable_Speed_A = 0.0f, const float &__I_Variable_Speed_B = 0.0f, const float &__I_Separate_Threshold = 0.0f, const Enum_PID_D_First &__D_First = PID_D_First_DISABLE, const float &__D_Filter_Cutoff = 0.0f);
 
+    /** 清空全部计算历史（积分、上一拍的误差/目标/输出、D 支路滤波状态）。
+     *  ★ Init 不清历史（那是文档明确的约定），断线恢复等需要"从零重新起步"
+     *    的场合必须调这个。增益 / 限幅 / 周期等参数原样保留。 */
+    void Reset();
+
     float Get_Target() const;
     float Get_Now() const;
     float Get_Error() const;
