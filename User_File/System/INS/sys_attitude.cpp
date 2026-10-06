@@ -15,6 +15,7 @@
 #include "bsp_bmi088.h"     /* BSP_BMI088 */
 #include "bsp_flash.h"      /* 零偏标定的 Flash 存储 */
 #include "sys_debug.h"      /* USB_Printf —— 标定回执 */
+#include "sys_timestamp.h"  /* 样本新鲜度使用单调微秒时间 */
 #include "dji_motor.h"      /* DJI_Motor_Any_Target_Active —— 标定前检查电机空闲 */
 #include "led.h"            /* 校准中的蓝闪 / 完成后的红闪 */
 #include "callback.h"       /* SPI1_Callback */
@@ -26,6 +27,13 @@
 #define RAD_2_DEG   57.29577951f
 
 Struct_Attitude Attitude;
+
+static bool Attitude_Sample_Is_Fresh(uint64_t sample_time_us)
+{
+    const uint64_t now_us = Sys_Get_Micros();
+    return sample_time_us != 0U && sample_time_us <= now_us &&
+           now_us - sample_time_us <= ATTITUDE_MAX_SAMPLE_AGE_US;
+}
 
 /* ══════════════ 零偏标定：KEY 长按 → 板载 30s 采样 → Flash ══════════════
  *
@@ -73,6 +81,7 @@ enum Enum_Calibration_Fail
     CAL_FAIL_MOTION,            /* 静止体检不过：采样期间被碰了 */
     CAL_FAIL_SAMPLE_TIMEOUT,    /* 采样超时：姿态帧不再更新（IMU 断流） */
     CAL_FAIL_FLASH,             /* 写 Flash 或读回校验失败 */
+    CAL_FAIL_SAMPLE_STALE,      /* 姿态无效或样本过期 */
 };
 static uint8_t s_Cal_Fail_Reason = CAL_FAIL_NONE;
 
@@ -127,13 +136,13 @@ static void Calibration_Blink_Blue(void)
 }
 
 /** Welford 单步：增量更新均值与 M2（数值稳定，见变量区注释） */
-static void Calibration_Welford_Update(void)
+static void Calibration_Welford_Update(const float gyro[3])
 {
     s_Cal_Count++;
     const float inv = 1.0f / (float)s_Cal_Count;
     for (uint8_t k = 0U; k < 3U; k++)
     {
-        const float x = Attitude.Gyro[k];
+        const float x = gyro[k];
         const float delta = x - s_Cal_Mean[k];
         s_Cal_Mean[k] += delta * inv;
         s_Cal_M2[k] += delta * (x - s_Cal_Mean[k]);
@@ -235,13 +244,20 @@ void Attitude_Calibration_Service(void)
 
         Calibration_Blink_Blue();
 
+        Struct_Attitude sample;
+        if (!Attitude_Get_Snapshot(&sample))
+        {
+            Calibration_Fail(CAL_FAIL_SAMPLE_STALE, "cal:abort,sample_stale");
+            break;
+        }
+
         /* ★ 只接受【新】样本：姿态帧序号推进了才算一帧。
          *   不判序号的话，IMU 断流时姿态停在冻结值，同一帧会被数 3 万遍
          *   —— 标准差≈0 反而"通过体检"，把冻结值当零偏差写进 Flash。 */
-        if (Attitude.Sequence != s_Cal_Last_Sequence)
+        if (sample.Sequence != s_Cal_Last_Sequence)
         {
-            s_Cal_Last_Sequence = Attitude.Sequence;
-            Calibration_Welford_Update();
+            s_Cal_Last_Sequence = sample.Sequence;
+            Calibration_Welford_Update(sample.Gyro);
         }
 
         if (s_Cal_Count >= CAL_TOTAL_SAMPLES)
@@ -259,6 +275,18 @@ void Attitude_Calibration_Service(void)
 
     case CAL_SAVING:
     {
+        /* 采样结束到本拍之间可能断流或启动电机，擦除前再检查一次。 */
+        Struct_Attitude sample;
+        if (!Attitude_Get_Snapshot(&sample))
+        {
+            Calibration_Fail(CAL_FAIL_SAMPLE_STALE, "cal:abort,sample_stale");
+            break;
+        }
+        if (DJI_Motor_Any_Target_Active())
+        {
+            Calibration_Fail(CAL_FAIL_MOTOR_ACTIVE, "cal:abort,motor_active");
+            break;
+        }
         const float temperature = BSP_BMI088.Get_Temperature();
 
         /* ⚠️ 这一拍全机冻结 1~2 秒（128KB 扇区擦除），LED/波形都会僵一下 */
@@ -456,7 +484,8 @@ void Attitude_Task(void)
      * 一次原子复制，保证四元数 / 欧拉角 / 原始量 / 零偏来自同一帧；
      * 不再逐个 getter 拼数据（那会拿到"半帧"，见结构体注释）。 */
     Struct_BMI088_Attitude_Frame frame;
-    const bool valid = BSP_BMI088.Get_Attitude_Frame(frame);
+    const bool valid = BSP_BMI088.Get_Attitude_Frame(frame) &&
+                       Attitude_Sample_Is_Fresh(frame.Sample_Time_Us);
 
     /* 以上一帧为底：无效时只把 Valid 拉低、让 Sample_Time_Us / Sequence 停住，
      * 数值保持上一帧 —— 波形上看到的是"冻住的最后一帧"，比跳回 0 好排查。 */
@@ -517,5 +546,7 @@ bool Attitude_Get_Snapshot(Struct_Attitude *Out)
     __DMB();
     __set_PRIMASK(primask);
 
+    Out->Valid = (Out->Valid != 0U &&
+                  Attitude_Sample_Is_Fresh(Out->Sample_Time_Us)) ? 1U : 0U;
     return Out->Valid != 0U;
 }

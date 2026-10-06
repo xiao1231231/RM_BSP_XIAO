@@ -44,7 +44,7 @@ extern "C" {
  * @param ...    和格式串对应的参数（浮点要转 double 再传，见调用处）
  *
  * @note  行缓冲 128 字节，超出截断不溢出。
- * @note  非阻塞 + 忙时丢弃（见文件顶部说明），可在任务和中断里调用。
+ * @note  非阻塞 + 忙时丢弃（见文件顶部说明），仅在任务上下文调用。
  *
  * @example 波形：UART_Printf(&huart1, "imu:%.2f,%.2f,%.2f",
  *                            (double)roll, (double)pitch, (double)yaw);

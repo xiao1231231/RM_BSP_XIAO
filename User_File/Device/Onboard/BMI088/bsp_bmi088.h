@@ -100,8 +100,8 @@ struct Struct_BMI088_VQF_Config
  *
  *        Sequence 每发布一帧 +1，消费者可比对判断"有没有新帧"；
  *        Sample_Time_Us 是产出这帧的【陀螺样本时刻】，不是"现在"。
- *        Valid = 确实产出了结果；队列没数据 / 初始化未完成时不发布，
- *        帧内容停在上一帧（Valid 也不变 false 以外的字段）。
+ *        Valid 只表示曾产出结果；队列没数据时整帧保持不变。
+ *        对外数据的新鲜度由 INS 层根据 Sample_Time_Us 判断。
  */
 struct Struct_BMI088_Attitude_Frame
 {
@@ -130,7 +130,7 @@ public:
     void Set_VQF_Config(const Struct_BMI088_VQF_Config &__Config);
 
     /**
-     * @brief 把外部标定出的零偏初值喂给 VQF（★ 必须在 Init() 之后调用）
+     * @brief 设置开机零偏初值：仅在 Init() 之后、调度器启动前调用
      * @param __Bias 陀螺零偏，单位 rad/s
      * @note  为什么要这个接口：上游用的是"板级标定常量"，换板子就不准；
      *        本工程改成【开机静止采样自标定】，标出来的值从这里喂进去，
@@ -145,6 +145,7 @@ public:
      *        零偏估计的读-改-写 —— 两个任务并发（同级 + 时间片）会写出
      *        混合值。本接口只登记"待应用的零偏"，由 Calculate() 在
      *        样本处理边界应用，保证滤波器只有一个写入者。
+     *        尚未消费时再次请求会替换旧请求；取走之后的新请求留给下一帧。
      */
     void Request_VQF_Bias_Estimate(const Class_Matrix_f32<3, 1> &__Bias);
 

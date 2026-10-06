@@ -34,6 +34,10 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
+/** 最大样本年龄：默认 100ms，与当前滤波器断流重置阈值一致。
+ *  控制应用需要更短的故障响应时，应收紧此值并验证队列延迟。 */
+#define ATTITUDE_MAX_SAMPLE_AGE_US 100000U
+
 /* ── 零偏标定（KEY 长按触发，板载 30s 采样 → Flash，见 .cpp 内注释）── */
 
 /** 零偏来源（调试器观察）：0=无 1=开机静止标定 2=Flash 里存的标定 */
@@ -66,7 +70,7 @@ typedef struct
     /* ── 新鲜度：跨任务读姿态必须看这三项 ── */
     uint64_t Sample_Time_Us; /**< 本帧对应的【陀螺样本时刻】，不是"现在" */
     uint32_t Sequence;       /**< 发布序号，每产出新一帧 +1（判断有没有新帧） */
-    uint8_t  Valid;          /**< 1 = 确实产出了结果；IMU 未初始化 / 没数据时为 0 */
+    uint8_t  Valid;          /**< 1 = 已产出且样本未过期；未初始化 / 断流超时为 0 */
 } Struct_Attitude;
 
 extern Struct_Attitude Attitude;
@@ -79,9 +83,9 @@ extern Struct_Attitude Attitude;
  *        本函数在关中断窗口内把整帧一次拷走（同时也挡住任务切换），
  *        保证 Out 里所有字段来自同一帧。
  *
- *        数据是否可用看 Out->Valid；数据有多新，用 Out 里的
- *        Sample_Time_Us 与调用时刻的 Sys_Get_Micros() 相减判断，
- *        或比对 Sequence 有没有变化。
+ *        复制后会重新检查样本年龄，即使 1ms 任务停止更新也会失效。
+ *        数据是否可用看 Out->Valid；是否是新样本则比对 Sequence。
+ *        过期时保留数值和时间戳，仅将输出副本的 Valid 置零。
  *
  * @param Out 复制结果
  * @return Out->Valid
@@ -94,7 +98,7 @@ bool Attitude_Get_Snapshot(Struct_Attitude *Out);
  *        每个配置步骤都带读回校验、失败重试 5 次（失败时每次等 100ms），
  *        最坏情况要几秒。所以不能放进任务里做。
  *        ⚠️ 零偏初值来源（见 Attitude_Bias_Source）：
- *           Flash 里有有效标定（电脑长时分析后经 USB 命令写入）→ 直接加载，
+ *           Flash 里有有效标定（按键触发的板载标定写入）→ 直接加载，
  *           【无需静止等待】；
  *           没有时退回 1 秒开机静止标定 —— 仅那一次需要静止放好。
  * @return 无返回值；初始化失败时姿态不会更新

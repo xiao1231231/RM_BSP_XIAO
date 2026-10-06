@@ -837,12 +837,20 @@ void Class_BMI088::Calculate()
         return;
     }
 
-    /* 应用外部请求的零偏（★ 只有本任务写滤波器，见 Request_VQF_Bias_Estimate）。
-     * 放在样本处理边界：这一帧起用新零偏，不存在"写一半"的中间态 */
-    if (VQF_Bias_Request_Pending)
+    /* 在短临界区取走完整请求；滤波器只读局部副本，后续请求留给下一帧。 */
+    Class_Matrix_f32<3, 1> requested_bias;
+    const uint32_t bias_primask = __get_PRIMASK();
+    __disable_irq();
+    const bool apply_bias = VQF_Bias_Request_Pending;
+    if (apply_bias)
     {
+        requested_bias = VQF_Bias_Requested;
         VQF_Bias_Request_Pending = false;
-        Filter_VQF.Set_Bias_Estimate(VQF_Bias_Requested);
+    }
+    __set_PRIMASK(bias_primask);
+    if (apply_bias)
+    {
+        Filter_VQF.Set_Bias_Estimate(requested_bias);
     }
 
     /* 加速度每 4ms 才更新一次，所以这里有"待用观测"的暂存：

@@ -79,11 +79,14 @@ static bool uart_start_receive(struct Struct_UART_Manage_Object *obj)
      *   反例（不加这层保护的竞态）：启动刚成功、还没清标志时来了一个接收错误，
      *   错误回调把 Rx_Restart_Pending 置真并停掉接收 —— 这里若无条件清零，
      *   那次恢复请求就被吞掉，串口永久停收（看门狗也不会再重试）。
-     *   错误回调会自增 Rx_Error_Count，用它当"期间有没有出错"的判据。 */
+     *   比较与清标志必须在同一临界区，避免错误中断插在两者之间。 */
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
     if (obj->Rx_Error_Count == errors_before)
     {
         obj->Rx_Restart_Pending = false;
     }
+    __set_PRIMASK(primask);
     return true;
 }
 
