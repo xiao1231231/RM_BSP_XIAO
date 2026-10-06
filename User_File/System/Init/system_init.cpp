@@ -11,6 +11,7 @@
 #include "dji_motor.h"
 #include "callback.h"
 #include "led.h"
+#include "key.h"
 #include "buzzer.h"
 #include "sys_attitude.h"
 #include "usb_device.h"
@@ -22,6 +23,7 @@ void System_Init(void)
 
     LED_Init();
     Buzzer_Init();
+    Key_Init();
 
     /* USART1：调试串口（波形输出，只发不收 → 回调给 NULL） */
     UART_Init(&huart1, NULL);

@@ -13,12 +13,294 @@
 
 #include "bsp_spi.h"        /* SPI_Init */
 #include "bsp_bmi088.h"     /* BSP_BMI088 */
+#include "bsp_flash.h"      /* 零偏标定的 Flash 存储 */
+#include "sys_debug.h"      /* USB_Printf —— 标定回执 */
+#include "dji_motor.h"      /* DJI_Motor_Any_Target_Active —— 标定前检查电机空闲 */
+#include "led.h"            /* 校准中的蓝闪 / 完成后的红闪 */
 #include "callback.h"       /* SPI1_Callback */
 #include "spi.h"            /* hspi1 —— BMI088 挂在这条 SPI 上 */
+
+#include "cmsis_os2.h"      /* osKernelGetTickCount —— 毫秒级相位计时 */
+#include <math.h>           /* sqrtf —— 静止体检算标准差 */
 
 #define RAD_2_DEG   57.29577951f
 
 Struct_Attitude Attitude;
+
+/* ══════════════ 零偏标定：KEY 长按 → 板载 30s 采样 → Flash ══════════════
+ *
+ * 数据流（借鉴 26h循迹 的按键+标定状态机模式，但只保留必要环节）：
+ *   KEY 模块（1kHz 扫描）检测到"长按 4 秒" → Attitude_Calibration_Request()
+ *   1ms 任务的 Attitude_Calibration_Service() 状态机：
+ *     IDLE ──启动前拒绝检查（IMU 就绪？电机没在转？）──
+ *         → SETTLE：松手后静置 2 秒（余振过去再开始采）
+ *         → SAMPLING：静止采 30000 拍（30s），蓝灯 250ms 闪烁
+ *         → SAVING：静止体检过 → 写 Flash（⚠️ 全机冻结 1~2 秒）
+ *         → DONE_BLINK：成功 = 红灯快闪 4 次；失败 = 红灯长亮 2 秒
+ *         → IDLE：LED 交回正常绿灯闪烁
+ *
+ * 三道质量闸门（都是为了让写进 Flash 的数真的代表零偏）：
+ *   ① 启动前：IMU 未就绪拒绝；有电机目标非零拒绝（板子不安静）
+ *   ② 采样中：电机被启动 → 立即中止
+ *   ③ 写入前：三轴标准差超限（板子被碰过）→ 拒绝写入
+ *
+ * 交互约定：
+ *   · 长按不足 4 秒松开 = 放弃；标定进行中再按键不响应
+ *   · 采样值 = Attitude.Gyro（未扣零偏的原始陀螺 rad/s），均值即零偏，
+ *     语义 = "VQF 要从原始值里减掉的量"，与 Flash 存储/启动加载共用一套约定
+ */
+volatile uint8_t Attitude_Bias_Source = 0U;
+
+static volatile bool s_Calibration_Requested = false;   /* KEY 长按置位 */
+static bool s_Cal_Active_Flag = false;                  /* LED 让位标志 */
+
+enum Enum_Calibration_State
+{
+    CAL_IDLE = 0,       /* 无标定进行 */
+    CAL_SETTLE,         /* 松手后的静置缓冲 */
+    CAL_SAMPLING,       /* 静止采样中 */
+    CAL_SAVING,         /* 写 Flash（一拍完成，期间冻结） */
+    CAL_DONE_BLINK,     /* 结果指示（红闪/红长亮） */
+};
+static Enum_Calibration_State s_Cal_State = CAL_IDLE;
+
+/** 失败原因（USB 回执已含文字说明，这里给调试器一个数值） */
+enum Enum_Calibration_Fail
+{
+    CAL_FAIL_NONE = 0U,
+    CAL_FAIL_IMU_NOT_READY,     /* IMU 没初始化完 */
+    CAL_FAIL_MOTOR_ACTIVE,      /* 有电机目标非零：板子不安静 */
+    CAL_FAIL_MOTION,            /* 静止体检不过：采样期间被碰了 */
+    CAL_FAIL_FLASH,             /* 写 Flash 或读回校验失败 */
+};
+static uint8_t s_Cal_Fail_Reason = CAL_FAIL_NONE;
+
+/* ── Welford 单遍均值/方差 ──
+ * 为什么不用 sum += x：float 只有 7 位有效数字，3 万个量级相近的角速度
+ * 朴素累加会持续舍入，均值被推歪；Welford 是增量式、数值稳定。
+ * 附带收益：M2 直接给出标准差，用来做"采样期间确实静止"的体检。 */
+static uint32_t s_Cal_Count = 0U;
+static float s_Cal_Mean[3] = {0.0f, 0.0f, 0.0f};
+static float s_Cal_M2[3] = {0.0f, 0.0f, 0.0f};
+
+static uint32_t s_Cal_Tick_Start = 0U;      /* 相位计时起点（RTOS ms 节拍） */
+static uint32_t s_Cal_Blink_Tick = 0U;
+static bool s_Cal_Blink_Level = false;
+static bool s_Cal_Save_Ok = false;
+
+/* 参数（都在这里调） */
+static constexpr uint32_t CAL_SETTLE_MS = 2000U;       /* 松手后的静置缓冲 */
+static constexpr uint32_t CAL_TOTAL_SAMPLES = 30000U;  /* 30s @ 1kHz */
+static constexpr float    CAL_MAX_STD_RAD_S = 0.05f;   /* 静止体检阈值（≈2.9°/s） */
+static constexpr uint32_t CAL_BLUE_BLINK_MS = 250U;    /* 采样中蓝闪半周期 */
+static constexpr uint32_t CAL_RED_BLINK_MS = 125U;     /* 完成红闪半周期 */
+static constexpr uint32_t CAL_RED_BLINK_TIMES = 4U;    /* 红闪次数 */
+static constexpr uint32_t CAL_FAIL_HOLD_MS = 2000U;    /* 失败红灯长亮时长 */
+
+void Attitude_Calibration_Request(void)
+{
+    if (s_Cal_State != CAL_IDLE) { return; }              /* 进行中：忽略 */
+    if (!BSP_BMI088.Is_Initialized()) { return; }         /* IMU 没就绪：忽略 */
+    s_Calibration_Requested = true;
+}
+
+bool Attitude_Calibration_Active(void)
+{
+    return s_Cal_Active_Flag;
+}
+
+/* ── 状态机内部辅助 ── */
+
+/** 蓝灯 250ms 闪烁（静置缓冲与采样期共用） */
+static void Calibration_Blink_Blue(void)
+{
+    const uint32_t now = osKernelGetTickCount();
+    if (now - s_Cal_Blink_Tick >= CAL_BLUE_BLINK_MS)
+    {
+        s_Cal_Blink_Tick = now;
+        s_Cal_Blink_Level = !s_Cal_Blink_Level;
+        if (s_Cal_Blink_Level) { LED_Blue(); } else { LED_Off(); }
+    }
+}
+
+/** Welford 单步：增量更新均值与 M2（数值稳定，见变量区注释） */
+static void Calibration_Welford_Update(void)
+{
+    s_Cal_Count++;
+    const float inv = 1.0f / (float)s_Cal_Count;
+    for (uint8_t k = 0U; k < 3U; k++)
+    {
+        const float x = Attitude.Gyro[k];
+        const float delta = x - s_Cal_Mean[k];
+        s_Cal_Mean[k] += delta * inv;
+        s_Cal_M2[k] += delta * (x - s_Cal_Mean[k]);
+    }
+}
+
+/** 三轴标准差的最大值（写入前的静止体检） */
+static float Calibration_Max_Std(void)
+{
+    float max_std = 0.0f;
+    for (uint8_t k = 0U; k < 3U; k++)
+    {
+        const float variance = s_Cal_M2[k] / (float)s_Cal_Count;
+        const float std = (variance > 0.0f) ? sqrtf(variance) : 0.0f;
+        if (std > max_std) { max_std = std; }
+    }
+    return max_std;
+}
+
+/** 中止/失败：记原因、回执、进入结果指示（红灯长亮） */
+static void Calibration_Fail(uint8_t reason, const char *receipt)
+{
+    s_Cal_Fail_Reason = reason;
+    s_Cal_Save_Ok = false;
+    USB_Printf("%s", receipt);
+    s_Cal_Tick_Start = osKernelGetTickCount();
+    s_Cal_Blink_Level = false;
+    s_Cal_State = CAL_DONE_BLINK;
+}
+
+void Attitude_Calibration_Service(void)
+{
+    switch (s_Cal_State)
+    {
+    case CAL_IDLE:
+    {
+        s_Cal_Active_Flag = false;
+        if (!s_Calibration_Requested) { return; }
+        s_Calibration_Requested = false;
+
+        /* 启动前拒绝检查：条件不满足就不开始，原因回执出去 */
+        if (!BSP_BMI088.Is_Initialized())
+        {
+            s_Cal_Fail_Reason = CAL_FAIL_IMU_NOT_READY;
+            USB_Printf("cal:reject,imu_not_ready");
+            return;
+        }
+        if (DJI_Motor_Any_Target_Active())
+        {
+            s_Cal_Fail_Reason = CAL_FAIL_MOTOR_ACTIVE;
+            USB_Printf("cal:reject,motor_active");
+            return;
+        }
+
+        s_Cal_Count = 0U;
+        s_Cal_Mean[0] = s_Cal_Mean[1] = s_Cal_Mean[2] = 0.0f;
+        s_Cal_M2[0] = s_Cal_M2[1] = s_Cal_M2[2] = 0.0f;
+        s_Cal_Tick_Start = osKernelGetTickCount();
+        s_Cal_Blink_Tick = s_Cal_Tick_Start;
+        s_Cal_Blink_Level = false;
+        s_Cal_Active_Flag = true;
+        s_Cal_State = CAL_SETTLE;
+        USB_Printf("cal:start,settle2s_then_sample30s");
+        break;
+    }
+
+    case CAL_SETTLE:
+    {
+        /* 静置缓冲：长按 4 秒后松手的余振会污染最初几拍，等板子安静再采 */
+        Calibration_Blink_Blue();
+        if (osKernelGetTickCount() - s_Cal_Tick_Start >= CAL_SETTLE_MS)
+        {
+            s_Cal_Count = 0U;
+            s_Cal_Mean[0] = s_Cal_Mean[1] = s_Cal_Mean[2] = 0.0f;
+            s_Cal_M2[0] = s_Cal_M2[1] = s_Cal_M2[2] = 0.0f;
+            s_Cal_State = CAL_SAMPLING;
+        }
+        break;
+    }
+
+    case CAL_SAMPLING:
+    {
+        /* 采样中途电机被启动 → 立刻中止（板子不安静，数据不可信） */
+        if (DJI_Motor_Any_Target_Active())
+        {
+            Calibration_Fail(CAL_FAIL_MOTOR_ACTIVE, "cal:abort,motor_active");
+            break;
+        }
+
+        Calibration_Blink_Blue();
+        Calibration_Welford_Update();
+
+        if (s_Cal_Count >= CAL_TOTAL_SAMPLES)
+        {
+            /* 静止体检：标准差超限 = 期间被碰过，拒绝写入 */
+            if (Calibration_Max_Std() > CAL_MAX_STD_RAD_S)
+            {
+                Calibration_Fail(CAL_FAIL_MOTION, "cal:abort,motion");
+                break;
+            }
+            s_Cal_State = CAL_SAVING;
+        }
+        break;
+    }
+
+    case CAL_SAVING:
+    {
+        const float temperature = BSP_BMI088.Get_Temperature();
+
+        /* ⚠️ 这一拍全机冻结 1~2 秒（128KB 扇区擦除），LED/波形都会僵一下 */
+        s_Cal_Save_Ok = BSP_Flash_Calibration_Save(s_Cal_Mean, temperature);
+        if (s_Cal_Save_Ok)
+        {
+            /* 顺手喂给当前 VQF 实例 —— 不用等下次开机就生效 */
+            BSP_BMI088.Set_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(s_Cal_Mean));
+            Attitude_Bias_Source = 2U;
+            USB_Printf("cal:done,ok,t=%.1f", (double)temperature);
+        }
+        else
+        {
+            s_Cal_Fail_Reason = CAL_FAIL_FLASH;
+            USB_Printf("cal:done,flash_fail");
+        }
+
+        s_Cal_Tick_Start = osKernelGetTickCount();
+        s_Cal_Blink_Level = false;
+        s_Cal_State = CAL_DONE_BLINK;
+        break;
+    }
+
+    case CAL_DONE_BLINK:
+    {
+        const uint32_t elapsed = osKernelGetTickCount() - s_Cal_Tick_Start;
+
+        if (s_Cal_Save_Ok)
+        {
+            /* 成功：红灯快闪 4 次（125ms 亮 + 125ms 灭），然后交回绿灯 */
+            const uint32_t index = elapsed / CAL_RED_BLINK_MS;
+            if (index >= CAL_RED_BLINK_TIMES * 2U)
+            {
+                LED_Off();
+                s_Cal_State = CAL_IDLE;
+            }
+            else
+            {
+                const bool on = (index % 2U) == 0U;
+                if (on != s_Cal_Blink_Level)
+                {
+                    s_Cal_Blink_Level = on;
+                    if (on) { LED_Red(); } else { LED_Off(); }
+                }
+            }
+        }
+        else
+        {
+            /* 失败：红灯长亮 2 秒（与成功态可区分），然后交回绿灯 */
+            if (elapsed >= CAL_FAIL_HOLD_MS)
+            {
+                LED_Off();
+                s_Cal_State = CAL_IDLE;
+            }
+            else
+            {
+                LED_Red();
+            }
+        }
+        break;
+    }
+    }
+}
 
 void Attitude_Init(void)
 {
@@ -99,39 +381,50 @@ void Attitude_Init(void)
     BSP_BMI088.BMI088_Gyro.Start_FIFO_Acquisition();
 
     /* ══════════════════════════════════════════════════════════════════
-     * ⑤ 开机零偏标定：静止采 1 秒陀螺，把平均值当作 VQF 的零偏初值
+     * ⑤ 零偏初值：优先 Flash 里存的离线标定，没有才退回开机静止标定
      *
-     *   为什么需要这一步：
-     *     上游那套依赖"板级标定常量"（他们那块板子的实测值），换一块板子就不能用，
-     *     所以陀螺的原始零偏只能靠 VQF 在线估计。而偏航轴的零偏在运动时几乎不可
-     *     观测（垂直方向权重只有水平方向的 1/10000），只能等静止期慢慢收 —— 表现
-     *     就是【上电后 yaw 以 0.2~0.3°/s 漂一两分钟】。
-     *     这里把开机这 1 秒的平均值先喂进去，在线估计只需要跟温漂的残余，
-     *     上电漂移立刻降一个量级（旧驱动那 6000 点标定起的就是这个作用）。
+     *   为什么需要零偏初值：
+     *     偏航轴的零偏在运动时几乎不可观测（垂直方向权重只有水平方向的
+     *     1/10000），VQF 只能等静止期慢慢收 —— 表现就是【上电后 yaw 漂移】。
+     *     给一个好的初值，在线估计只需要跟温漂的残余。
      *
-     *   ⚠️ 采样这一秒里板子必须静止放好 —— 否则标定出来的就是"运动速度"，
-     *      喂进去反而更糟。这是旧驱动一直以来的要求，别在晃动的桌面上开机。
+     *   来源一（首选）：电脑对【长时静态数据】做统计（均值 = 零偏），结果经
+     *     USB 命令 bias: 写进片上 Flash（见 Attitude_USB_Command）——
+     *     统计时长以小时计，精度远超这里的 1 秒采样，且存的是 40°C 稳态
+     *     工况下的值（恒温的意义所在）。开机直接加载，【无需静止等待】。
+     *   来源二（兜底）：首次使用 / Flash 校验失败时，开机静止采 1 秒取平均。
+     *     ⚠️ 只有走这条路的那一次需要静止放好 —— 晃动着开机，标出来的
+     *        就是"运动速度"，喂进去反而更糟。
      * ══════════════════════════════════════════════════════════════════ */
     {
-        const uint32_t sample_count = 2000U;          /* 2kHz 陀螺 ≈ 1 秒 */
-        float bias_sum[3] = {0.0f, 0.0f, 0.0f};
-        for (uint32_t i = 0U; i < sample_count; i++)
-        {
-            const Class_Matrix_f32<3, 1> gyro = BSP_BMI088.BMI088_Gyro.Get_Raw_Gyro();
-            bias_sum[0] += gyro[0][0];
-            bias_sum[1] += gyro[1][0];
-            bias_sum[2] += gyro[2][0];
-            Sys_Delay_S(0.0005f);                      /* 500µs，对齐陀螺的 2kHz 采样 */
-        }
+        float stored_bias[3];
+        float stored_temperature;
 
-        const float bias_average[3] = {
-            bias_sum[0] / (float)sample_count,
-            bias_sum[1] / (float)sample_count,
-            bias_sum[2] / (float)sample_count};
-        BSP_BMI088.Set_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(bias_average));
-        /* 标定结果不打印（串口只发波形）。想确认它标了多少：
-         * 波形里 yaw 上电后的漂移速度就反映了残余；或者临时加一个通道
-         * 显示 Attitude.GyroBias[2]*1000（那是 VQF 收敛后的零偏）。 */
+        if (BSP_Flash_Calibration_Load(stored_bias, &stored_temperature))
+        {
+            BSP_BMI088.Set_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(stored_bias));
+            Attitude_Bias_Source = 2U;
+        }
+        else
+        {
+            const uint32_t sample_count = 2000U;          /* 2kHz 陀螺 ≈ 1 秒 */
+            float bias_sum[3] = {0.0f, 0.0f, 0.0f};
+            for (uint32_t i = 0U; i < sample_count; i++)
+            {
+                const Class_Matrix_f32<3, 1> gyro = BSP_BMI088.BMI088_Gyro.Get_Raw_Gyro();
+                bias_sum[0] += gyro[0][0];
+                bias_sum[1] += gyro[1][0];
+                bias_sum[2] += gyro[2][0];
+                Sys_Delay_S(0.0005f);                      /* 500µs，对齐陀螺的 2kHz 采样 */
+            }
+
+            const float bias_average[3] = {
+                bias_sum[0] / (float)sample_count,
+                bias_sum[1] / (float)sample_count,
+                bias_sum[2] / (float)sample_count};
+            BSP_BMI088.Set_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(bias_average));
+            Attitude_Bias_Source = 1U;
+        }
     }
 }
 

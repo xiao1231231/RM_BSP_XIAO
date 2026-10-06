@@ -34,6 +34,21 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
+/* ── 零偏标定（KEY 长按触发，板载 30s 采样 → Flash，见 .cpp 内注释）── */
+
+/** 零偏来源（调试器观察）：0=无 1=开机静止标定 2=Flash 里存的标定 */
+extern volatile uint8_t Attitude_Bias_Source;
+
+/** 标定状态机是否占用 LED（TIM_1ms_Task 的绿灯闪烁要给它让位） */
+bool Attitude_Calibration_Active(void);
+
+/** KEY 模块检测到"长按 4 秒"后调用：请求一次标定（重复请求/条件不满足自动忽略） */
+void Attitude_Calibration_Request(void);
+
+/** 标定状态机，1kHz 调用（30s 采样 → 写 Flash → LED 指示 → 交回绿灯）
+ *  ⚠️ 写 Flash 那一拍全机冻结 1~2 秒，只在台架标定场景发生 */
+void Attitude_Calibration_Service(void);
+
 /** 姿态输出结构。除三轴姿态外，另带两项 VQF 独有的诊断量：零偏估计和静止标志 */
 typedef struct
 {
@@ -78,9 +93,10 @@ bool Attitude_Get_Snapshot(Struct_Attitude *Out);
  * @note  必须在调度器启动前调用 —— 里面是【阻塞】的：
  *        每个配置步骤都带读回校验、失败重试 5 次（失败时每次等 100ms），
  *        最坏情况要几秒。所以不能放进任务里做。
- *        ⚠️ 期间板子必须静止放好 —— 最后一步要做 1 秒开机零偏标定
- *           （静止采 2000 个陀螺样本取平均，喂给 VQF 当零偏初值）。
- *           晃动着开机，标出来的就是"运动速度"，喂进去反而放大漂移。
+ *        ⚠️ 零偏初值来源（见 Attitude_Bias_Source）：
+ *           Flash 里有有效标定（电脑长时分析后经 USB 命令写入）→ 直接加载，
+ *           【无需静止等待】；
+ *           没有时退回 1 秒开机静止标定 —— 仅那一次需要静止放好。
  * @return 无返回值；初始化失败时姿态不会更新
  *         （串口只发波形、没有日志，表现就是波形上的角度一直 0 不动）
  */

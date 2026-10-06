@@ -2,7 +2,6 @@
 #include "main.h"
 #include "usart.h"
 #include "bsp_uart.h"
-#include "bsp_usb.h"
 #include "bsp_spi.h"
 #include "bsp_bmi088.h"
 #include "bsp_can.h"
@@ -28,20 +27,16 @@ void USART6_Frame_Callback(uint8_t *Buffer, uint16_t Length)
 
 /* ══════════════ USB CDC 收包占位 ══════════════
  *
- * USB 虚拟串口（bsp_usb）还没接上位协议，先只做包计数，证明收链路活着。
- * 接上位机/视觉时把解析逻辑写进这里。⚠️ 运行在【USB 中断上下文】——
- * 只做轻量的事；一"包"是一次 USB 传输（FS 下 ≤64 字节），不是协议帧。
+ * USB 虚拟串口当前只发不收（波形），收链路保持活着：只做包计数。
+ * ⚠️ 运行在【USB 中断上下文】—— 一"包"是一次 USB 传输（FS 下 ≤64 字节）。
  */
 volatile uint32_t usb_frame_count = 0;
 
 void USB_Frame_Callback(uint8_t *Buffer, uint16_t Length)
 {
+    (void)Buffer;
+    (void)Length;
     usb_frame_count++;
-
-    /* ── 临时回环测试：收到什么发回什么，验证双向链路。测完删 ──
-     * 在 USB 中断里调 USB_Transmit 是安全的：发送只是把数据拷进端点
-     * FIFO，端点忙时它自己返回 false 丢弃，不会阻塞中断。 */
-    USB_Transmit(Buffer, Length);
 }
 
 /* ══════════════ UART ══════════════

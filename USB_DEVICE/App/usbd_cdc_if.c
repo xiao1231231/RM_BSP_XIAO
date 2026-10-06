@@ -287,7 +287,10 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
   uint8_t result = USBD_OK;
   /* USER CODE BEGIN 7 */
   USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
-  if (hcdc->TxState != 0){
+  /* ★ 补判空（CubeMX 模板没有）：USB 未连接 / 未完成枚举时 pClassData == NULL，
+   *   直接解引用就是 HardFault —— 本工程 24V 供电、USB 常年不插，50Hz 波形
+   *   一发送就会触发。未连接按"忙"处理，本包丢弃即可。 */
+  if (hcdc == NULL || hcdc->TxState != 0){
     return USBD_BUSY;
   }
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);

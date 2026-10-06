@@ -113,4 +113,7 @@ Class_DJI_Motor *DJI_Motor_Get(Enum_DJI_Motor_Num Motor_Num);
 /** 1kHz 调用：逐个跑速度环 → 按 0x200/0x1FF 两组拼帧发送 */
 void DJI_Motor_Control_Task();
 
+/** 是否有任一电机的目标转速非零（零偏标定等需要板子绝对安静的场景用来拒绝启动） */
+bool DJI_Motor_Any_Target_Active(void);
+
 #endif /* DJI_MOTOR_H */

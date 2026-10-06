@@ -2,14 +2,15 @@
  * @file    sys_debug.h
  * @brief   调试输出 —— 格式化一行文本，从【任意一路串口】发出去
  *
- * @note    统一发送接口只有一个：UART_Printf(串口, 格式串, ...)。
- *          想发哪路就传哪路的句柄（&huart1 / &huart6 / 以后的 &huart3），
+ * @note    发送接口有两个，对应两条物理链路，格式契约完全一致：
+ *            UART_Printf(串口, 格式串, ...) —— 走 UART（USART1/6/3...）
+ *            USB_Printf(格式串, ...)      —— 走 USB 虚拟串口（CDC/VCP）
  *          格式化、补换行、非阻塞发送全部是同一套代码。
  *
- *          发送规则（所有串口一致）：
+ *          发送规则（两条链路一致）：
  *            · 非阻塞：拷进缓冲就返回，绝不拖住调用者（1ms 任务/中断里都能调）
- *            · 忙时丢弃：上一帧还没发完就丢这一帧 —— 调用频率别超过串口带宽
- *              （115200 波特 ≈ 11520 字节/秒，一行 30 字节 ≈ 2.6ms）
+ *            · 忙时丢弃：上一帧还没发完就丢这一帧 —— 调用频率别超过通道带宽
+ *              （UART 115200 ≈ 11.5KB/s；USB FS 实际可用带宽远高于此）
  *
  *          FireWater/VOFA+ 格式约定（见 UART_Printf 的参数说明）：
  *            一行就是一帧："前缀:数值,数值,..."，冒号只能有一个。
@@ -48,6 +49,13 @@ extern "C" {
  * @example 文本：UART_Printf(&huart6, "vbat=%.2fV", (double)voltage);
  */
 void UART_Printf(UART_HandleTypeDef *huart, const char *Fmt, ...);
+
+/**
+ * @brief 格式化一行文本并通过 USB 虚拟串口发出（格式契约同 UART_Printf）
+ * @note  VOFA+ 连接的是电脑上枚举出来的 COMx（"USB 串行设备"）。
+ *        USB 没插电脑 / 未枚举时安全：底层返回忙、本帧丢弃，不阻塞不崩溃。
+ */
+void USB_Printf(const char *Fmt, ...);
 
 #ifdef __cplusplus
 }

@@ -70,6 +70,18 @@ Class_DJI_Motor *DJI_Motor_Get(Enum_DJI_Motor_Num Motor_Num)
     return (motor_id >= 1 && motor_id <= DJI_MOTOR_CNT) ? motors[motor_id - 1] : nullptr;
 }
 
+bool DJI_Motor_Any_Target_Active(void)
+{
+    for (uint8_t i = 0U; i < DJI_MOTOR_CNT; i++)
+    {
+        if (motors[i] != nullptr && motors[i]->Get_Target_Speed_Rpm() != 0.0f)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Class_DJI_Motor::Init(CAN_HandleTypeDef *hcan, uint8_t Motor_Id,
                            float K_P, float K_I, float K_D)
 {

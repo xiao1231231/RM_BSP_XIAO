@@ -6,12 +6,12 @@
  */
 #include "cmsis_os2.h"
 #include "main.h"
-#include "usart.h"
 #include "can.h"
 #include "sys_debug.h"
 #include "sys_timestamp.h"
 #include "bsp_uart.h"
 #include "led.h"
+#include "key.h"
 #include "sys_attitude.h"
 #include "bsp_bmi088.h"
 #include "dji_motor.h"
@@ -63,6 +63,15 @@ extern "C" void TIM_1ms_Task(void *argument)
 
         Attitude_Task();
 
+        /* 按键扫描（长按 4 秒 = 请求零偏标定）+ 标定状态机
+         * （采样中蓝灯闪；写 Flash 时全机冻结 1~2 秒；完成红灯快闪 4 次） */
+        Key_Service();
+        if (Key_Get_LongPress())
+        {
+            Attitude_Calibration_Request();
+        }
+        Attitude_Calibration_Service();
+
         /* 串口接收看门狗：兜底逻辑，只在收停止后才起作用 */
         BSP_UART_Recover_PeriodElapsedCallback();
 
@@ -72,26 +81,28 @@ extern "C" void TIM_1ms_Task(void *argument)
         /* DJI 电机：速度环 + 分组发送，1kHz */
         DJI_Motor_Control_Task();
 
-        /* 绿灯 500ms 闪烁，用于观察程序是否正常运行 */
-        if (++blink_div >= 500)
+        /* 绿灯 500ms 闪烁，用于观察程序是否正常运行
+         * （零偏标定状态机占用 LED 期间让位 —— 它在闪蓝/红） */
+        if (!Attitude_Calibration_Active())
         {
-            blink_div = 0;
-            led_mode = !led_mode;
-            if (led_mode){LED_Green();}
-            else{LED_Off();}
+            if (++blink_div >= 500)
+            {
+                blink_div = 0;
+                led_mode = !led_mode;
+                if (led_mode){LED_Green();}
+                else{LED_Off();}
+            }
         }
 
-        /* 三轴姿态 + 恒温观测，50Hz
-         * 通道：roll, pitch, yaw, temp(°C), heat_pwm(0~9999) */
+        /* 三轴姿态，50Hz，走 USB 虚拟串口（VOFA+ FireWater 格式）
+         * 通道：roll, pitch, yaw */
         //待打包成弧度制去调参
         if (++wave_div >= 20U)
         {
             wave_div = 0;
-            UART_Printf(&huart1, "imu:%.2f,%.2f,%.2f,%.2f,%lu",
+            USB_Printf("imu:%.2f,%.2f,%.2f",
                         (double)Attitude.Roll, (double)Attitude.Pitch,
-                        (double)Attitude.Yaw,
-                        (double)BSP_BMI088.Get_Temperature(),
-                        (unsigned long)BSP_BMI088.Get_Heater_PWM_Compare());
+                        (double)Attitude.Yaw);
         }
 
         /* 节拍推进 + 跳拍保护：必须在所有工作之后。
