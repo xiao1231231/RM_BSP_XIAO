@@ -120,8 +120,6 @@ public:
 
     inline uint64_t Get_FIFO_Last_Interrupt_Timestamp_Us() const;
 
-    inline Class_Matrix_f32<3, 1> Get_Callibrated_Gyro() const;
-
     /** SPI 收完一笔时由上层分发进来：解析 FIFO_STATUS / FIFO_DATA / 寄存器 */
     uint8_t SPI_RxCallback(const uint64_t &__Ready_Timestamp_Us);
 

@@ -20,7 +20,7 @@
 #include "bsp_can.h"
 #include "alg_pid.h"
 
-#define DJI_MOTOR_CNT       8
+#define DJI_MOTOR_CNT       8           /* 池容量按 1~8 号预留；枚举当前只覆盖 1~4 号（5~8 号接到 0x1FF 组，届时补枚举即可） */
 #define DJI_ECD_ANGLE_COEF  0.043945f   /* 360 / 8192 */
 #define DJI_GEAR_RATIO      19.2f       /* 3508 减速比 */
 #define DJI_OUT_CURRENT_MAX 16384.0f    /* C620 电流指令限幅（±20A） */

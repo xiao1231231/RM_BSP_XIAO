@@ -56,7 +56,7 @@ void System_Init(void)
     DJI_Motor_Create(DJI_MOTOR_2, 15.0f, 2.0f, 0.0f);
     DJI_Motor_Create(DJI_MOTOR_3, 15.0f, 2.0f, 0.0f);
     DJI_Motor_Create(DJI_MOTOR_4, 15.0f, 2.0f, 0.0f);
-    DJI_Motor_Get(DJI_MOTOR_3)->Set_Target_Speed_Rpm(0.00f);   //测试用，记得删
+
     /* 姿态解算（SPI 层 + BMI088 + VQF）。放在调度器启动前 ——
      * 里面是阻塞的：配置逐步读回校验（失败重试）+ 开机零偏标定 1 秒。
      * ⚠️ 这段时间板子必须静止放好 —— 零偏标定要求静止，

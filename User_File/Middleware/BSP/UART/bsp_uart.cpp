@@ -7,7 +7,7 @@
  * 所有串口对象收在这里，UART_Init 时登记；实例映射和接收看门狗都遍历这个池。
  * 以前"对象定义 / 映射 if / 看门狗数组 / extern"要登记 4 处，漏任何一处都是
  * 编译照过、运行静默失效 —— 现在收敛成"只在 UART_Init 登记"这一个入口。 */
-#define UART_PORT_MAX 4                 /* USART1 / USART6 / USART3(DBUS) + 富余 */
+#define UART_PORT_MAX 4                 /* USART1 / USART6 + 将来接 DBUS 的 USART3，留富余 */
 static struct Struct_UART_Manage_Object uart_pool[UART_PORT_MAX];
 static uint8_t uart_registered = 0;     /* 只在调度器启动前写（System_Init），之后只读 */
 

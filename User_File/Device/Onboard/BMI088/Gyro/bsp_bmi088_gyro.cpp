@@ -401,31 +401,6 @@ uint8_t Class_BMI088_Gyro::SPI_RxCallback(const uint64_t &__Ready_Timestamp_Us)
     /* 普通寄存器：收回来的字节按偏移填进 Register（Init 里读回校验用） */
     memcpy((uint8_t *) (&Register) + spi_init_address, &SPI_Manage_Object->Rx_Buffer[1], SPI_Manage_Object->Rx_Buffer_Length);
 
-    // 直接读角速度寄存器那条路（FIFO 不可用时的退路）
-    if (spi_init_address == offsetof(Struct_BMI088_Gyro_Register, RATE_X_RO))
-    {
-        Vector_Raw_Gyro = Decode_Gyro_Frame(
-            reinterpret_cast<const uint8_t *>(&Register.RATE_X_RO));
-
-        const bool invalid_float = Basic_Math_Is_Invalid_Float(Vector_Raw_Gyro[0][0]) ||
-                                   Basic_Math_Is_Invalid_Float(Vector_Raw_Gyro[1][0]) ||
-                                   Basic_Math_Is_Invalid_Float(Vector_Raw_Gyro[2][0]);
-        const bool outlier = fabsf(Vector_Raw_Gyro[0][0]) >= BMI088_GYRO_OUTLIER_ABSOLUTE_THRESHOLD ||
-                             fabsf(Vector_Raw_Gyro[1][0]) >= BMI088_GYRO_OUTLIER_ABSOLUTE_THRESHOLD ||
-                             fabsf(Vector_Raw_Gyro[2][0]) >= BMI088_GYRO_OUTLIER_ABSOLUTE_THRESHOLD;
-        if (invalid_float || outlier)
-        {
-            Valid_Flag = false;
-            if (outlier)
-            {
-                BMI088_Gyro_Outlier_Counter++;
-            }
-        }
-        else
-        {
-            Valid_Flag = true;
-        }
-    }
     return BMI088_GYRO_SPI_RESULT_NONE;
 }
 

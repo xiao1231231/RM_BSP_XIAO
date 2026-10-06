@@ -49,7 +49,7 @@ struct Struct_UART_Manage_Object
 
     /* ── 接收状态 ── */
     uint16_t Rx_Ready_Length;       /* Ready 缓冲里这一帧的长度 */
-    uint64_t Rx_Timestamp;          /* 本帧时刻（Sys_Get_Micros）*/
+    uint64_t Rx_Timestamp;          /* 本帧时刻（Sys_Get_Micros）—— 调试器观察用，暂无软件消费者 */
     volatile uint32_t Rx_Error_Count;   /* 错误中断更新，恢复任务读取 */
     uint32_t Rx_Restart_Count;
     volatile bool Rx_Restart_Pending;   /* 错误后待重启（中断置位，任务清理） */

@@ -316,6 +316,8 @@ protected:
     uint32_t SPI_Accel_Timeout_Counter = 0U;
     uint32_t SPI_Gyro_Timeout_Counter = 0U;
     uint32_t SPI_Temperature_Timeout_Counter = 0U;
+    /* ⚠️ 当前【没有】任何代码把它写成非零值：恢复由服务里的超时巡检按需直接发起。
+     *    下面"待恢复时禁止继续调度"的分支是为将来从 ISR 请求恢复预留的，别当活路径。 */
     volatile uint8_t SPI_Recovery_Pending_Reason = BMI088_SPI_RECOVERY_NONE;
     uint8_t SPI_Recovery_Last_Reason = BMI088_SPI_RECOVERY_NONE;
     uint32_t Sensor_Ready_Gap_Counter = 0U;
