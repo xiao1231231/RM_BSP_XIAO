@@ -54,6 +54,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/UART/bsp_uart.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/SPI/bsp_spi.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/CAN/bsp_can.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/USB/bsp_usb.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/TIM_1ms_Task.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/BMI088_Task.cpp
 
@@ -105,6 +106,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         User_File/Middleware/BSP/UART
         User_File/Middleware/BSP/SPI
         User_File/Middleware/BSP/CAN
+        User_File/Middleware/BSP/USB
         User_File/Device/Peripheral/Motor/DJImotor
 
         # ── BMI088 + 姿态解算 ──

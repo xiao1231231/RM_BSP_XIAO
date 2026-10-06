@@ -71,6 +71,7 @@ const osThreadAttr_t BMI088_attributes = {
 void TIM_1ms_Task(void *argument);
 void BMI088_Task(void *argument);
 
+extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* Hook prototypes */
@@ -174,6 +175,8 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_TIM_1ms_Task */
 __weak void TIM_1ms_Task(void *argument)
 {
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN TIM_1ms_Task */
   /* Infinite loop */
   for(;;)

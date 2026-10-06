@@ -37,6 +37,15 @@ void USART6_Frame_Callback(uint8_t *Buffer, uint16_t Length);
 /** USART6 已收到的帧数（调试器可见；接了真实外设后可删） */
 extern volatile uint32_t usart6_frame_count;
 
+/**
+ * @brief USB 虚拟串口收包回调（由 bsp_usb 的接收链路调用）
+ * @note  当前只做包计数（usb_frame_count）。运行在 USB 中断上下文。
+ */
+void USB_Frame_Callback(uint8_t *Buffer, uint16_t Length);
+
+/** USB 已收到的包数（调试器可见；一次 USB 传输 ≤64B，不是协议帧） */
+extern volatile uint32_t usb_frame_count;
+
 #ifdef __cplusplus
 }
 #endif
