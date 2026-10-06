@@ -55,13 +55,15 @@ static void uart_disable_rx_ht_irq(UART_HandleTypeDef *huart)
  *        ② uart_disable_rx_ht_irq()       —— 关掉半传输中断（① 内部会把它重新打开）
  *        ★ 顺序不能反，先关再启动等于白关。
  *
- *        这三步原来在 UART_Init / RxEventCallback / 看门狗里各写了一遍，
- *        看门狗那条就漏了 ②。收敛成一个函数就是为了不再漏。
+ *        这套动作原来在 UART_Init / RxEventCallback / 看门狗【三个调用点】
+ *        各写了一遍，看门狗那条就漏了 ②。收敛成一个函数就是为了不再漏。
  *
  * @return true = 已在接收；false = 启动失败（已记错误并置重启标志，交给看门狗重试）
  */
 static bool uart_start_receive(struct Struct_UART_Manage_Object *obj)
 {
+    const uint32_t errors_before = obj->Rx_Error_Count;
+
     if (HAL_UARTEx_ReceiveToIdle_DMA(obj->UART_Handler,
                                      obj->Rx_Buffer_Active,
                                      UART_BUFFER_SIZE) != HAL_OK)
@@ -72,7 +74,16 @@ static bool uart_start_receive(struct Struct_UART_Manage_Object *obj)
     }
 
     uart_disable_rx_ht_irq(obj->UART_Handler);
-    obj->Rx_Restart_Pending = false;      /* 接收已经在跑，撤销重启请求 */
+
+    /* ★ 只有"启动过程中没有新错误发生"才撤销重启请求。
+     *   反例（不加这层保护的竞态）：启动刚成功、还没清标志时来了一个接收错误，
+     *   错误回调把 Rx_Restart_Pending 置真并停掉接收 —— 这里若无条件清零，
+     *   那次恢复请求就被吞掉，串口永久停收（看门狗也不会再重试）。
+     *   错误回调会自增 Rx_Error_Count，用它当"期间有没有出错"的判据。 */
+    if (obj->Rx_Error_Count == errors_before)
+    {
+        obj->Rx_Restart_Pending = false;
+    }
     return true;
 }
 

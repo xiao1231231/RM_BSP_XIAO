@@ -290,6 +290,17 @@ void Class_BMI088::Set_VQF_Bias_Estimate(const Class_Matrix_f32<3, 1> &__Bias)
     Filter_VQF.Set_Bias_Estimate(__Bias);
 }
 
+void Class_BMI088::Request_VQF_Bias_Estimate(const Class_Matrix_f32<3, 1> &__Bias)
+{
+    /* 关中断同时挡住任务切换（PendSV）：登记动作对解算任务是原子的 */
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    VQF_Bias_Requested = __Bias;
+    __DMB();
+    VQF_Bias_Request_Pending = true;
+    __set_PRIMASK(primask);
+}
+
 /**
  * @brief 初始化：加速度计 → 陀螺 → VQF
  *
@@ -824,6 +835,14 @@ void Class_BMI088::Calculate()
     if (!BMI088_Gyro.Pop_Sample(gyro_sample))
     {
         return;
+    }
+
+    /* 应用外部请求的零偏（★ 只有本任务写滤波器，见 Request_VQF_Bias_Estimate）。
+     * 放在样本处理边界：这一帧起用新零偏，不存在"写一半"的中间态 */
+    if (VQF_Bias_Request_Pending)
+    {
+        VQF_Bias_Request_Pending = false;
+        Filter_VQF.Set_Bias_Estimate(VQF_Bias_Requested);
     }
 
     /* 加速度每 4ms 才更新一次，所以这里有"待用观测"的暂存：

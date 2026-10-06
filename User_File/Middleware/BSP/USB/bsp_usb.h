@@ -37,9 +37,12 @@ void USB_Init(USB_Rx_Callback Callback);
 
 /**
  * @brief 非阻塞发送
- * @return true = 已交给协议栈；false = 端点忙（上一包还没被主机取走）/ 参数错
- * @note  忙就丢，不排队。FS 模式下协议栈在提交时【同步】把数据拷进端点 FIFO
- *        （OTG_FS 无 DMA），返回后调用方即可复用 Data，无需保持有效。
+ * @return true = 已交给协议栈；false = 未枚举 / 端点忙（上一帧还没被主机取走）/ 参数错
+ * @note  忙就丢，不排队。★ 本层自己持有发送缓冲并先拷贝再提交 ——
+ *        不能把调用方缓冲直接交给协议栈：HAL 的 PCD 发送是异步的
+ *        （数据在后续 TX FIFO 空中断里才被读走），栈上缓冲会提前失效。
+ *        因为拷贝过，调用方函数返回后即可复用 Data。
+ * @note  长度上限 128 字节（超过返回 false）。
  */
 bool USB_Transmit(const uint8_t *Data, uint16_t Length);
 

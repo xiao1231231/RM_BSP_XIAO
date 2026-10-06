@@ -29,7 +29,7 @@
 
 /* Exported macros -----------------------------------------------------------*/
 
-/** 收发缓冲区字节长度（单次传输的 Tx+Tx 总长上限） */
+/** 收发缓冲区字节长度（单次传输的 Tx+Rx 总长上限） */
 #define SPI_BUFFER_SIZE 512
 
 /* Exported types ------------------------------------------------------------*/
@@ -65,7 +65,7 @@ struct Struct_SPI_Manage_Object
     uint16_t Tx_Buffer_Length;
     uint16_t Rx_Buffer_Length;
 
-    /** 本次收发完成的时刻（μs，来自 Sys_Get_Micros） */
+    /** 本次收发完成的时刻（μs，来自 Sys_Get_Micros）—— 调试器观察用，暂无软件消费者 */
     volatile uint64_t Rx_Timestamp;
 
     /* ── 诊断计数 ── */

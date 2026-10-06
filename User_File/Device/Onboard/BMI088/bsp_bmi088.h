@@ -138,6 +138,16 @@ public:
      */
     void Set_VQF_Bias_Estimate(const Class_Matrix_f32<3, 1> &__Bias);
 
+    /**
+     * @brief 请求更新 VQF 零偏（★ 跨任务可用，实际生效在解算任务里）
+     * @note  为什么不能从别的任务直接调 Set_VQF_Bias_Estimate：
+     *        那是逐元素写滤波器内部状态，而 BMI088_Task 同时在跑
+     *        零偏估计的读-改-写 —— 两个任务并发（同级 + 时间片）会写出
+     *        混合值。本接口只登记"待应用的零偏"，由 Calculate() 在
+     *        样本处理边界应用，保证滤波器只有一个写入者。
+     */
+    void Request_VQF_Bias_Estimate(const Class_Matrix_f32<3, 1> &__Bias);
+
     bool Init();
     bool Is_Initialized() const { return Init_Finished_Flag; }
 
@@ -284,6 +294,10 @@ protected:
      * 两边都在短临界区里，保证"整帧"语义。 */
     Struct_BMI088_Attitude_Frame Attitude_Frame = {};
     uint32_t Attitude_Sequence = 0U;        ///< 提交时自增，保证序号单调
+
+    /* ── 待应用的零偏请求（跨任务：请求方登记，解算任务在 Calculate() 消费）── */
+    Class_Matrix_f32<3, 1> VQF_Bias_Requested;
+    bool VQF_Bias_Request_Pending = false;
 
     float Accel_Norm = 0.0f;
     uint32_t Accel_Update_Result = 0U;

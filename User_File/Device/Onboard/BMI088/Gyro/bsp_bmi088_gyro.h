@@ -224,11 +224,7 @@ protected:
 
     void Read_Single_Register(const uint8_t &Register_Address) const;
 
-    void Read_Multi_Register(const uint8_t &Register_Address, const uint32_t &Rx_Length) const;
-
     void Write_Single_Register(const uint8_t &Register_Address, const uint8_t *Tx_Data_Buffer) const;
-
-    void Write_Multi_Register(const uint8_t &Register_Address, const uint8_t *Tx_Data_Buffer, const uint32_t &Tx_Length) const;
 
     Class_Matrix_f32<3, 1> Decode_Gyro_Frame(const uint8_t *__Frame) const;
 

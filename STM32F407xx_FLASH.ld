@@ -53,11 +53,15 @@
 ENTRY(Reset_Handler)
 
 /* Specify the memory areas */
+/* ★ 程序区只给前 896K：最后 128K（sector 11，0x080E0000 起）被
+ *   User_File/Middleware/BSP/FLASH/bsp_flash.cpp 用作零偏标定数据区。
+ *   链接器绝不能把代码/常量分配进去 —— 否则"保存标定"的整扇区擦除
+ *   会把程序本身擦掉。改这里的长度必须同步 bsp_flash.h 里的地址定义。 */
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 128K
 CCMRAM (xrw)      : ORIGIN = 0x10000000, LENGTH = 64K
-FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 1024K
+FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 896K
 }
 
 /* Highest address of the user mode stack */

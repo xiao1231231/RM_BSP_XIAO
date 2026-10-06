@@ -349,19 +349,4 @@ void Class_BMI088_Accel::Write_Single_Register(const uint8_t &Register_Address, 
                       Activate_Pin_State, tx_data, sizeof(tx_data));
 }
 
-/** @brief 写多个寄存器 */
-void Class_BMI088_Accel::Write_Multi_Register(const uint8_t &Register_Address, const uint8_t *Tx_Data_Buffer, const uint32_t &Tx_Length) const
-{
-    if (Tx_Length > (SPI_BUFFER_SIZE - 1U))
-    {
-        return;
-    }
-    uint8_t tx_data[SPI_BUFFER_SIZE] = {};
-    tx_data[0] = Register_Address;
-    memcpy(&tx_data[1], Tx_Data_Buffer, Tx_Length);
-
-    SPI_Transmit_Data(SPI_Manage_Object->SPI_Handler, CS_GPIO_Port, CS_Pin, Activate_Pin_State,
-                      tx_data, static_cast<uint16_t>(Tx_Length + 1U));
-}
-
 /************************ COPYRIGHT(C) USTC-ROBOWALKER **************************/

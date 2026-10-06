@@ -140,7 +140,9 @@ void BSP_CAN_RxFifo0Callback(CAN_HandleTypeDef *hcan)
      *   原来的写法是"取到失败为止"，而 FIFO 空时 HAL 会把
      *   HAL_CAN_ERROR_PARAM 记进 hcan->ErrorCode（stm32f4xx_hal_can.c:1524）——
      *   等于每次正常接收都在污染错误状态，以后真出错就分不出来了。
-     *   （bxCAN 每个 FIFO 硬件只有 3 格，这个循环天然最多转 3 圈） */
+     *   （硬件 FIFO 只有 3 格，但本循环由"当前填充量"驱动：处理期间新到的帧
+     *     会让它继续转，所以不天然有界 —— 当前 4 个电调 @1kHz 每轮只有几帧；
+     *     将来总线挂满（如加了多路设备）要在这里加单次处理预算） */
     while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) > 0U)
     {
         if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, data) != HAL_OK)

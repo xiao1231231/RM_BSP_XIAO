@@ -71,6 +71,7 @@ enum Enum_Calibration_Fail
     CAL_FAIL_IMU_NOT_READY,     /* IMU 没初始化完 */
     CAL_FAIL_MOTOR_ACTIVE,      /* 有电机目标非零：板子不安静 */
     CAL_FAIL_MOTION,            /* 静止体检不过：采样期间被碰了 */
+    CAL_FAIL_SAMPLE_TIMEOUT,    /* 采样超时：姿态帧不再更新（IMU 断流） */
     CAL_FAIL_FLASH,             /* 写 Flash 或读回校验失败 */
 };
 static uint8_t s_Cal_Fail_Reason = CAL_FAIL_NONE;
@@ -85,12 +86,14 @@ static float s_Cal_M2[3] = {0.0f, 0.0f, 0.0f};
 
 static uint32_t s_Cal_Tick_Start = 0U;      /* 相位计时起点（RTOS ms 节拍） */
 static uint32_t s_Cal_Blink_Tick = 0U;
+static uint32_t s_Cal_Last_Sequence = 0U;   /* 已计入的姿态帧序号（判新样本） */
 static bool s_Cal_Blink_Level = false;
 static bool s_Cal_Save_Ok = false;
 
 /* 参数（都在这里调） */
 static constexpr uint32_t CAL_SETTLE_MS = 2000U;       /* 松手后的静置缓冲 */
 static constexpr uint32_t CAL_TOTAL_SAMPLES = 30000U;  /* 30s @ 1kHz */
+static constexpr uint32_t CAL_SAMPLE_TIMEOUT_MS = 45000U; /* 采样硬超时（30s + 余量） */
 static constexpr float    CAL_MAX_STD_RAD_S = 0.05f;   /* 静止体检阈值（≈2.9°/s） */
 static constexpr uint32_t CAL_BLUE_BLINK_MS = 250U;    /* 采样中蓝闪半周期 */
 static constexpr uint32_t CAL_RED_BLINK_MS = 125U;     /* 完成红闪半周期 */
@@ -188,6 +191,7 @@ void Attitude_Calibration_Service(void)
         s_Cal_Count = 0U;
         s_Cal_Mean[0] = s_Cal_Mean[1] = s_Cal_Mean[2] = 0.0f;
         s_Cal_M2[0] = s_Cal_M2[1] = s_Cal_M2[2] = 0.0f;
+        s_Cal_Last_Sequence = Attitude.Sequence;
         s_Cal_Tick_Start = osKernelGetTickCount();
         s_Cal_Blink_Tick = s_Cal_Tick_Start;
         s_Cal_Blink_Level = false;
@@ -206,6 +210,8 @@ void Attitude_Calibration_Service(void)
             s_Cal_Count = 0U;
             s_Cal_Mean[0] = s_Cal_Mean[1] = s_Cal_Mean[2] = 0.0f;
             s_Cal_M2[0] = s_Cal_M2[1] = s_Cal_M2[2] = 0.0f;
+            s_Cal_Last_Sequence = Attitude.Sequence;
+            s_Cal_Tick_Start = osKernelGetTickCount();
             s_Cal_State = CAL_SAMPLING;
         }
         break;
@@ -220,8 +226,23 @@ void Attitude_Calibration_Service(void)
             break;
         }
 
+        /* 采样超时：IMU 断流/故障时凑不满 3 万帧，到点中止而不是无限等 */
+        if (osKernelGetTickCount() - s_Cal_Tick_Start >= CAL_SAMPLE_TIMEOUT_MS)
+        {
+            Calibration_Fail(CAL_FAIL_SAMPLE_TIMEOUT, "cal:abort,sample_timeout");
+            break;
+        }
+
         Calibration_Blink_Blue();
-        Calibration_Welford_Update();
+
+        /* ★ 只接受【新】样本：姿态帧序号推进了才算一帧。
+         *   不判序号的话，IMU 断流时姿态停在冻结值，同一帧会被数 3 万遍
+         *   —— 标准差≈0 反而"通过体检"，把冻结值当零偏差写进 Flash。 */
+        if (Attitude.Sequence != s_Cal_Last_Sequence)
+        {
+            s_Cal_Last_Sequence = Attitude.Sequence;
+            Calibration_Welford_Update();
+        }
 
         if (s_Cal_Count >= CAL_TOTAL_SAMPLES)
         {
@@ -244,8 +265,9 @@ void Attitude_Calibration_Service(void)
         s_Cal_Save_Ok = BSP_Flash_Calibration_Save(s_Cal_Mean, temperature);
         if (s_Cal_Save_Ok)
         {
-            /* 顺手喂给当前 VQF 实例 —— 不用等下次开机就生效 */
-            BSP_BMI088.Set_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(s_Cal_Mean));
+            /* 通过"请求"接口喂给 VQF：由解算任务在样本边界应用 ——
+             * 直接从本任务写滤波器会和 BMI088_Task 的零偏估计并发（见接口注释） */
+            BSP_BMI088.Request_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(s_Cal_Mean));
             Attitude_Bias_Source = 2U;
             USB_Printf("cal:done,ok,t=%.1f", (double)temperature);
         }
@@ -388,10 +410,10 @@ void Attitude_Init(void)
      *     1/10000），VQF 只能等静止期慢慢收 —— 表现就是【上电后 yaw 漂移】。
      *     给一个好的初值，在线估计只需要跟温漂的残余。
      *
-     *   来源一（首选）：电脑对【长时静态数据】做统计（均值 = 零偏），结果经
-     *     USB 命令 bias: 写进片上 Flash（见 Attitude_USB_Command）——
-     *     统计时长以小时计，精度远超这里的 1 秒采样，且存的是 40°C 稳态
-     *     工况下的值（恒温的意义所在）。开机直接加载，【无需静止等待】。
+     *   来源一（首选）：Flash 里存过的标定 —— 由按键触发的板载 30 秒标定
+     *     写入（见本文件的标定状态机）。统计时长 30 秒、写入前有静止体检，
+     *     存的是 40°C 稳态工况下的值（恒温的意义所在）。
+     *     开机直接加载，【无需静止等待】。
      *   来源二（兜底）：首次使用 / Flash 校验失败时，开机静止采 1 秒取平均。
      *     ⚠️ 只有走这条路的那一次需要静止放好 —— 晃动着开机，标出来的
      *        就是"运动速度"，喂进去反而更糟。

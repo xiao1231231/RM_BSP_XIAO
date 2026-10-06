@@ -549,19 +549,6 @@ void Class_BMI088_Gyro::Read_Single_Register(const uint8_t &Register_Address) co
                               Activate_Pin_State, tx_data, 1, 1);
 }
 
-/** @brief 读多个寄存器（同上，异步） */
-void Class_BMI088_Gyro::Read_Multi_Register(const uint8_t &Register_Address, const uint32_t &Rx_Length) const
-{
-    if (Rx_Length > (SPI_BUFFER_SIZE - 1U))
-    {
-        return;
-    }
-    const uint8_t tx_data[1] = {static_cast<uint8_t>(Register_Address | BMI088_GYRO_READ_MASK)};
-
-    SPI_Transmit_Receive_Data(SPI_Manage_Object->SPI_Handler, CS_GPIO_Port, CS_Pin,
-                              Activate_Pin_State, tx_data, 1, static_cast<uint16_t>(Rx_Length));
-}
-
 /** @brief 写单个寄存器（地址 + 数据，两字节，写操作不需要掩码） */
 void Class_BMI088_Gyro::Write_Single_Register(const uint8_t &Register_Address, const uint8_t *Tx_Data_Buffer) const
 {
@@ -569,21 +556,6 @@ void Class_BMI088_Gyro::Write_Single_Register(const uint8_t &Register_Address, c
 
     SPI_Transmit_Data(SPI_Manage_Object->SPI_Handler, CS_GPIO_Port, CS_Pin,
                       Activate_Pin_State, tx_data, sizeof(tx_data));
-}
-
-/** @brief 写多个寄存器 */
-void Class_BMI088_Gyro::Write_Multi_Register(const uint8_t &Register_Address, const uint8_t *Tx_Data_Buffer, const uint32_t &Tx_Length) const
-{
-    if (Tx_Length > (SPI_BUFFER_SIZE - 1U))
-    {
-        return;
-    }
-    uint8_t tx_data[SPI_BUFFER_SIZE] = {};
-    tx_data[0] = Register_Address;
-    memcpy(&tx_data[1], Tx_Data_Buffer, Tx_Length);
-
-    SPI_Transmit_Data(SPI_Manage_Object->SPI_Handler, CS_GPIO_Port, CS_Pin, Activate_Pin_State,
-                      tx_data, static_cast<uint16_t>(Tx_Length + 1U));
 }
 
 /************************ COPYRIGHT(C) USTC-ROBOWALKER **************************/

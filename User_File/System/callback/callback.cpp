@@ -124,10 +124,3 @@ extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
  * 将来可能的：HAL_ADC_ConvCpltCallback()（ADC 采样完成）等。
  */
 
-extern "C" void System_Callback_Init(void)
-{
-    /* 目前无需注册动作 —— 回调是"弱符号覆盖"，编译期就绑定好了，
-     * 不像 basic_framework 那样需要运行时注册回调指针。
-     * 保留这个函数是为了给"运行时注册"留一个统一入口。 */
-}
-

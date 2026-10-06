@@ -9,16 +9,14 @@ extern "C" {
 #endif
 
 /**
- * @brief 集中分发 HAL 回调
+ * HAL 回调的集中转发出入口
+ *
  * @note  本文件【只做转发】，不含任何业务逻辑。
- *        UART / CAN / EXTI 的 HAL __weak 回调在这里覆盖，转给对应 BSP 层。
+ *        UART / CAN / EXTI 的 HAL __weak 回调在 callback.cpp 里覆盖，转给对应 BSP 层。
  *        另有两处历史分工：SPI 的完成/错误回调实现在 bsp_spi.cpp（它要操作
  *        本层的事务状态）；main.c 里的 TIM14 周期回调只是 HAL 时基
  *        （HAL_IncTick）—— 1ms 任务由 RTOS 的 SysTick 节拍驱动，与它无关。
- */
-void System_Callback_Init(void);
-
-/**
+ *
  * @brief SPI1 收发完成回调（由 bsp_spi 层通过函数指针调用）
  * @note  按参数里的片选分发给对应器件（目前只有 BMI088）。
  *        在 SPI_Init() 时作为回调注册进去，所以要能被 sys_attitude 取到地址。
