@@ -35,18 +35,9 @@ Class_DJI_Motor *DJI_Motor_Create(Enum_DJI_Motor_Num Motor_Num,
         return nullptr;
     }
 
-    /* 静态池：全局存储、地址确定，与本工程其它模块一致（不 malloc） */
+    /* 静态池按电机编号索引，不 malloc；重复编号已在上方拦截。 */
     static Class_DJI_Motor pool[DJI_MOTOR_CNT];
-    static bool used[DJI_MOTOR_CNT] = {};
-    uint8_t slot;
-    for (slot = 0; slot < DJI_MOTOR_CNT; slot++)
-    {
-        if (!used[slot]) { break; }
-    }
-    if (slot == DJI_MOTOR_CNT) { return nullptr; }   /* 满池：不许越界写 pool[8] */
-
-    Class_DJI_Motor *motor = &pool[slot];
-    used[slot] = true;
+    Class_DJI_Motor *motor = &pool[motor_id - 1];
     motor->Init(motor_can_handle, motor_id, K_P, K_I, K_D);
     motors[motor_id - 1] = motor;
 
@@ -58,7 +49,6 @@ Class_DJI_Motor *DJI_Motor_Create(Enum_DJI_Motor_Num Motor_Num,
                              Motor_Feedback_Callback))
     {
         motors[motor_id - 1] = nullptr;
-        used[slot] = false;
         return nullptr;
     }
     return motor;

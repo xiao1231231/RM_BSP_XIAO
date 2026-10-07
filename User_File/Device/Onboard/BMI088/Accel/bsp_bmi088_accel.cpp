@@ -66,10 +66,7 @@ Struct_BMI088_Accel_Temperature_State Class_BMI088_Accel::Get_Temperature_State(
     state.Temperature = Now_Temperature;
     const bool raw_valid = Temperature_Valid_Flag;
     __DMB();
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 
     if (raw_valid)
     {
@@ -107,16 +104,8 @@ bool Class_BMI088_Accel::Init()
                          HEATER_D_T);
     /* 启动加热 PWM，Compare 从 0 开始（上电不加热，等 PID 接管）。
      * 启动失败就把恒温关掉 —— IMU 没有恒温也能跑，只是温漂大一点。 */
-    if (HAL_TIM_PWM_Start(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL) != HAL_OK)
-    {
-        Heater_Enable = false;
-        __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, 0U);
-    }
-    else
-    {
-        Heater_Enable = true;
-        __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, 0U);
-    }
+    Heater_Enable = (HAL_TIM_PWM_Start(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL) == HAL_OK);
+    __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, 0U);
 
     uint8_t res;
 
@@ -285,7 +274,7 @@ uint8_t Class_BMI088_Accel::SPI_Request_Temperature()
  * @note  温度数据无效/过期时立即停热 —— 温度不可信时宁可不加热，
  *        也不能让 PID 拿着旧温度一直输出大功率。
  */
-void Class_BMI088_Accel::Heater_Control(const float &__Now_Temperature)
+void Class_BMI088_Accel::Heater_Control()
 {
     if (!Heater_Enable)
     {
@@ -301,7 +290,7 @@ void Class_BMI088_Accel::Heater_Control(const float &__Now_Temperature)
     }
 
     PID_Temperature.Set_Target(HEATER_TARGET_TEMPERATURE);
-    PID_Temperature.Set_Now(__Now_Temperature);
+    PID_Temperature.Set_Now(state.Temperature);
     PID_Temperature.TIM_Calculate_PeriodElapsedCallback();
 
     /* PID 输出即 PWM Compare（0~9999），负值截为 0（只能加热不能制冷） */

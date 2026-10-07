@@ -76,9 +76,8 @@ public:
      *          （积分限幅限制了爬升速度，等效于缓慢预热，不会过冲太多）。
      *        ★ 目标温度 40°C：C 板官方的取值。再高收益递减（温漂变小变慢），
      *          而夏天 40°C 起点近、加热负担小。
-     *        @param __Now_Temperature 当前 IMU 温度（°C）
      */
-    void Heater_Control(const float &__Now_Temperature);
+    void Heater_Control();
 
     /** 恒温是否已使能（Init 里决定） */
     inline bool Get_Heater_Enable() const;
@@ -220,10 +219,7 @@ inline Class_Matrix_f32<3, 1> Class_BMI088_Accel::Get_Raw_Accel() const
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
     const Class_Matrix_f32<3, 1> accel = Vector_Raw_Accel;
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return accel;
 }
 

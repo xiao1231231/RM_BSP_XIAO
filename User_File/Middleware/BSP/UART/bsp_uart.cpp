@@ -105,8 +105,6 @@ void UART_Init(UART_HandleTypeDef *huart, UART_Callback Callback)
     obj->UART_Handler       = huart;
     obj->Callback_Function  = Callback;
     obj->Rx_Buffer_Active   = obj->Rx_Buffer_0;
-    obj->Rx_Buffer_Ready    = obj->Rx_Buffer_1;
-    obj->Rx_Ready_Length    = 0;
     obj->Rx_Timestamp       = 0;
     obj->Rx_Error_Count     = 0;
     obj->Rx_Restart_Count   = 0;
@@ -175,14 +173,12 @@ void BSP_UART_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     if (huart->RxEventType == HAL_UART_RXEVENT_HT) { return; }
     if (Size == 0) { return; }
 
-    /* ② 记录帧长与时刻 */
-    obj->Rx_Ready_Length = Size;
-    obj->Rx_Timestamp    = Sys_Get_Micros();
+    /* ② 记录接收时刻 */
+    obj->Rx_Timestamp = Sys_Get_Micros();
 
     /* ③ 交换缓冲：刚写满的变成 Ready，另一块拿去接收下一帧
      *    ★ 必须在解析之前做 —— 先让 DMA 继续跑，再慢慢处理数据 */
     uint8_t *just_filled  = obj->Rx_Buffer_Active;
-    obj->Rx_Buffer_Ready  = just_filled;
     obj->Rx_Buffer_Active = (just_filled == obj->Rx_Buffer_0) ? obj->Rx_Buffer_1
                                                              : obj->Rx_Buffer_0;
 
@@ -193,7 +189,7 @@ void BSP_UART_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     /* ④ 交给设备层解析 */
     if (obj->Callback_Function != NULL)
     {
-        obj->Callback_Function(obj->Rx_Buffer_Ready, obj->Rx_Ready_Length);
+        obj->Callback_Function(just_filled, Size);
     }
 }
 

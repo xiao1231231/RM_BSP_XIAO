@@ -63,10 +63,7 @@ static void BMI088_Status_Clear_Update_If_Matches(Struct_BMI088_Status &Status, 
     {
         Status.Update_Flag = false;
     }
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 }
 
 /**
@@ -81,10 +78,7 @@ static bool BMI088_Status_Begin_Transfer(Struct_BMI088_Status &Status,
     __disable_irq();
     if (!Status.Ready_Flag || Status.Transfering_Flag)
     {
-        if (primask == 0U)
-        {
-            __enable_irq();
-        }
+        __set_PRIMASK(primask);
         return false;
     }
 
@@ -94,10 +88,7 @@ static bool BMI088_Status_Begin_Transfer(Struct_BMI088_Status &Status,
     Status.Transfer_Timeout_Armed = false;
     Status.Transfering_Flag = true;
     Status.Ready_Flag = false;
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return true;
 }
 
@@ -122,10 +113,7 @@ static void BMI088_Status_Arm_Transfer_Timeout(
         Status.Transfer_Timeout_Armed = true;
         __DMB();
     }
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 }
 
 static void BMI088_Status_Mark_Ready_If_Clear(
@@ -141,10 +129,7 @@ static void BMI088_Status_Mark_Ready(Struct_BMI088_Status &Status,
     __DMB();
     Status.Ready_Flag = true;
     __DMB();
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 }
 
 /**
@@ -166,10 +151,7 @@ static void BMI088_Status_Restore_Ready_After_Start_Failure(
         Status.Ready_Timestamp = Transfer_Ready_Timestamp;
         Status.Ready_Flag = true;
     }
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 }
 
 /**
@@ -204,10 +186,7 @@ static bool BMI088_Status_Restore_Ready_On_Timeout(Struct_BMI088_Status &Status,
             Status.Ready_Flag = true;
         }
     }
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return timed_out;
 }
 
@@ -225,10 +204,7 @@ static void BMI088_Status_Restore_Ready_On_Recovery(Struct_BMI088_Status &Status
     Status.Transfer_Start_Timestamp_Low32 = 0U;
     Status.Transfer_Timeout_Armed = false;
     Status.Transfer_Ready_Timestamp = 0U;
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 }
 
 /** @brief 把一条 DMA 流恢复到可用状态（HAL_SPI_Abort 之后必须做）
@@ -612,18 +588,12 @@ void Class_BMI088::BMI088_Service_Transfer(const bool &Allow_Recovery)
     __disable_irq();
     if (Transfer_Service_Active)
     {
-        if (primask == 0U)
-        {
-            __enable_irq();
-        }
+        __set_PRIMASK(primask);
         return;
     }
     Transfer_Service_Active = true;
     __DMB();
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 
     BMI088_Service_Transfer_Locked(Allow_Recovery);
 
@@ -632,10 +602,7 @@ void Class_BMI088::BMI088_Service_Transfer(const bool &Allow_Recovery)
     __DMB();
     Transfer_Service_Active = false;
     __DMB();
-    if (unlock_primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(unlock_primask);
 }
 
 /**
@@ -862,10 +829,7 @@ void Class_BMI088::Calculate()
         const Struct_BMI088_Status accel_status_snapshot = Accel_Status;
         const Class_Matrix_f32<3, 1> accel_snapshot = BMI088_Accel.Get_Raw_Accel();
         const bool accel_valid_snapshot = BMI088_Accel.Get_Valid_Flag();
-        if (primask == 0U)
-        {
-            __enable_irq();
-        }
+        __set_PRIMASK(primask);
 
         if (accel_status_snapshot.Update_Flag)
         {
@@ -1039,10 +1003,7 @@ static void BMI088_Status_Mark_Ready_If_Clear(
         Status.Ready_Flag = true;
         __DMB();
     }
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
 }
 
 /** @brief 记录一次加速度更新结果（接受/拒绝 + 计数），供诊断 */

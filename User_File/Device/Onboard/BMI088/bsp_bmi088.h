@@ -159,7 +159,7 @@ public:
      */
     void Heater_Control()
     {
-        BMI088_Accel.Heater_Control(BMI088_Accel.Get_Now_Temperature());
+        BMI088_Accel.Heater_Control();
     }
 
     inline bool Get_Heater_Enable() const { return BMI088_Accel.Get_Heater_Enable(); }
@@ -346,10 +346,7 @@ inline Data_Type Class_BMI088::Get_Atomic_Copy(const Data_Type &__Data) const
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
     const Data_Type data = __Data;
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return data;
 }
 
@@ -502,10 +499,7 @@ inline Class_Matrix_f32<3, 1> Class_BMI088::Get_VQF_Gyro_Bias() const
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
     const Class_Matrix_f32<3, 1> bias = Filter_VQF.Get_Bias_Estimate();
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return bias;
 }
 
@@ -525,10 +519,7 @@ inline Class_Matrix_f32<2, 1> Class_BMI088::Get_VQF_Relative_Rest_Deviation() co
     __disable_irq();
     const Class_Matrix_f32<2, 1> deviation =
         Filter_VQF.Get_Relative_Rest_Deviation();
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return deviation;
 }
 

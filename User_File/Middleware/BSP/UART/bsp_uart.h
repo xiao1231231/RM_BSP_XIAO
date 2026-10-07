@@ -20,7 +20,7 @@ extern "C" {
 /**
  * @brief 接收完成回调
  *
- * @param Buffer 收满的帧数据（指向管理对象的 Ready 缓冲）
+ * @param Buffer 收满的帧数据（指向本轮接收完成的内部缓冲）
  * @param Length 本帧字节数
  *
  * @note  ★ 在【中断上下文】执行。只做拷贝和置位级的轻量解析。
@@ -45,10 +45,8 @@ struct Struct_UART_Manage_Object
     uint8_t  Rx_Buffer_0[UART_BUFFER_SIZE];
     uint8_t  Rx_Buffer_1[UART_BUFFER_SIZE];
     uint8_t *Rx_Buffer_Active;      /* DMA 正在往里写的 */
-    uint8_t *Rx_Buffer_Ready;       /* 刚收满、已停止的，可以安全读 */
 
     /* ── 接收状态 ── */
-    uint16_t Rx_Ready_Length;       /* Ready 缓冲里这一帧的长度 */
     uint64_t Rx_Timestamp;          /* 本帧时刻（Sys_Get_Micros）—— 调试器观察用，暂无软件消费者 */
     volatile uint32_t Rx_Error_Count;   /* 错误中断更新，恢复任务读取 */
     uint32_t Rx_Restart_Count;

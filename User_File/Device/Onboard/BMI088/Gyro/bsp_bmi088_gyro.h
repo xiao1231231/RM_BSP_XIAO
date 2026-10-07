@@ -244,10 +244,7 @@ inline Class_Matrix_f32<3, 1> Class_BMI088_Gyro::Get_Raw_Gyro() const
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
     const Class_Matrix_f32<3, 1> gyro = Vector_Raw_Gyro;
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return gyro;
 }
 
@@ -317,10 +314,7 @@ inline uint64_t Class_BMI088_Gyro::Get_FIFO_Last_Interrupt_Timestamp_Us() const
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
     const uint64_t timestamp_us = FIFO_Last_Interrupt_Timestamp_Us;
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return timestamp_us;
 }
 

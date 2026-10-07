@@ -142,10 +142,7 @@ static bool SPI_Try_Acquire_Transaction(Struct_SPI_Manage_Object *manage_object)
     {
         manage_object->Transaction_Busy_Count++;
     }
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
+    __set_PRIMASK(primask);
     return acquired;
 }
 
