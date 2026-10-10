@@ -69,7 +69,7 @@ public:
     bool Init();
 
     /**
-     * @brief IMU 恒温控制（★ 需要周期调用，500Hz；本工程在 1ms 任务里分频）
+     * @brief IMU 恒温控制（500Hz，由 IMU_Service_Task 分频调用）
      * @note  方案照搬 basic_framework（C 板官方工程）：
      *          纯 PID 直出 PWM 占空比 —— 温度低就加热多，到目标就少给。
      *          没有独立的"预热阶段"，全靠 PID 积分从 0 爬上来
@@ -154,7 +154,7 @@ protected:
     static constexpr float HEATER_TARGET_TEMPERATURE = 40.0f;
     static constexpr float HEATER_OUT_MAX = 9999.0f;
     static constexpr float HEATER_I_OUT_MAX = 1500.0f;
-    /** 恒温计算周期：1ms 任务每 2 拍调一次 = 500Hz（与官方一致） */
+    /** 恒温名义计算周期：IMU_Service_Task 每 2 次周期服务调用一次。 */
     static constexpr float HEATER_D_T = 0.002f;
 
     /** 恒温 PID */

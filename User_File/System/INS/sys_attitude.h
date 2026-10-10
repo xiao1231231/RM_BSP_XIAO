@@ -3,7 +3,7 @@
  * @brief   姿态解算对外接口（本工程唯一的姿态来源）
  *
  * @note    ★ 实现已换成 H7_BSP 那套（BMI088 状态机 + FIFO + VQF），
- *          但对外接口保持不变 —— 波形、日志、后续章节都只认这里。
+ *          波形输出和控制应用通过本接口获取整帧姿态结果。
  *
  *          数据流（细节见 Device/Onboard/BMI088/）：
  *            陀螺 INT3(PC5) 每 500µs 就绪 → EXTI → SPI DMA 读 FIFO
@@ -11,7 +11,7 @@
  *              → BMI088_Task 逐样本跑 VQF → 姿态结果
  *            加速度 INT1(PC4) 就绪 → 读一次 → 下一帧解算时做重力修正
  *            温度 128ms 读一次（慢变量）
- *          Attitude_Task()（1ms 调用）只做一件事：把结果搬进下面这个结构体。
+ *          BMI088_Task 每次解算后调用 Attitude_Task()，整帧发布姿态结果。
  *
  * @note    ★ VQF 的核心价值：在线零偏估计，尤其是【静止期】的估计
  *
@@ -43,33 +43,12 @@ extern "C" {
 /** 零偏来源（调试器观察）：0=无 1=开机静止标定 2=Flash 里存的标定 */
 extern volatile uint8_t Attitude_Bias_Source;
 
-/** 标定状态机是否占用 LED（TIM_1ms_Task 的绿灯闪烁要给它让位） */
-bool Attitude_Calibration_Active(void);
-
 /** KEY 模块检测到"长按 4 秒"后调用：请求一次标定（重复请求/条件不满足自动忽略） */
 void Attitude_Calibration_Request(void);
 
-/** 标定状态机，1kHz 调用（30s 采样 → 写 Flash → LED 指示 → 交回绿灯）
- *  ⚠️ 写 Flash 那一拍全机冻结 1~2 秒，只在台架标定场景发生 */
+/** Calibration_Task 每 1ms 推进标定：采样、检查、写 Flash，结果提交到 USB。
+ *  Flash 保存为同步操作，擦写期间可能暂停任务执行，耗时需在目标板验证。 */
 void Attitude_Calibration_Service(void);
-
-typedef enum
-{
-    ATTITUDE_CAL_IDLE = 0,
-    ATTITUDE_CAL_RUNNING,
-    ATTITUDE_CAL_SUCCESS,
-    ATTITUDE_CAL_FAILED
-} Enum_Attitude_Calibration_Status;
-
-typedef struct
-{
-    Enum_Attitude_Calibration_Status Status;
-    uint32_t Start_Tick;  // 当前阶段的起始时间
-} Struct_Attitude_Calibration_Status;
-
-// 跨任务获取标定状态，供 LED 任务使用
-void Attitude_Calibration_Get_Status(
-    Struct_Attitude_Calibration_Status *Out);
 
 /** 姿态输出结构。除三轴姿态外，另带两项 VQF 独有的诊断量：零偏估计和静止标志 */
 typedef struct
@@ -96,12 +75,12 @@ extern Struct_Attitude Attitude;
 /**
  * @brief 整帧复制最近一帧姿态（★ 跨任务读姿态统一走这里）
  *
- * @note  为什么不能直接读全局 Attitude：它由 1ms 任务逐项更新，
- *        别的任务直读会拿到"半帧"（比如新的四元数配上旧的欧拉角）。
+ * @note  BMI088_Task 在短临界区内整帧发布 Attitude；读者也必须整帧取用，
+ *        避免逐个读字段时被发布任务抢占，混合不同帧的数据。
  *        本函数在关中断窗口内把整帧一次拷走（同时也挡住任务切换），
  *        保证 Out 里所有字段来自同一帧。
  *
- *        复制后会重新检查样本年龄，即使 1ms 任务停止更新也会失效。
+ *        复制后会重新检查样本年龄，即使解算任务停止更新也会失效。
  *        数据是否可用看 Out->Valid；是否是新样本则比对 Sequence。
  *        过期时保留数值和时间戳，仅将输出副本的 Valid 置零。
  *
@@ -125,7 +104,7 @@ bool Attitude_Get_Snapshot(Struct_Attitude *Out);
 void Attitude_Init(void);
 
 /**
- * @brief 把姿态结果搬到对外结构体，1kHz 调用
+ * @brief 整帧发布姿态结果，由 BMI088_Task 每次解算后调用
  * @note  ★ 姿态解算本身【不在】这里跑：
  *        陀螺积分在 BMI088_Task 里（每来一帧样本算一次，2kHz），
  *        这里是纯搬运，耗时只有几十个浮点拷贝。

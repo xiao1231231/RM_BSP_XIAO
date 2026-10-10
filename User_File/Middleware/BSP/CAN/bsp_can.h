@@ -46,7 +46,7 @@ bool CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Tx_ID,
 void BSP_CAN_RxFifo0Callback(CAN_HandleTypeDef *hcan);
 
 /**
- * @brief 总线故障巡检，1kHz 调一次（和 UART 的恢复服务并排，见 TIM_1ms_Task）
+ * @brief 总线故障巡检，由 System_Service_Task 每 1ms 调用
  * @note  只观察不动作：bus-off 交给硬件的 AutoBusOff 自己恢复
  */
 void BSP_CAN_Service_PeriodElapsedCallback(CAN_HandleTypeDef *hcan);

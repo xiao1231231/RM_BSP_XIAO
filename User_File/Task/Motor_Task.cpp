@@ -22,6 +22,7 @@ extern "C" void Motor_Task(void *argument)
         // 各电机速度闭环计算，并发送分组电流指令
         DJI_Motor_Control_Task();
 
+        
         // 推进到下一个 1ms 节拍
         wake += 1U;
         const uint32_t now_tick = osKernelGetTickCount();

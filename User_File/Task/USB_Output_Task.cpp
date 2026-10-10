@@ -12,7 +12,7 @@ extern "C" void USB_Output_Task(void *argument)
 
     for (;;)
     {
-        // 优先发送标定回执，没有回执时发送姿态波形
+        // 优先尝试发送标定回执，没有待发回执时发送姿态波形。
         if (!USB_Send_Pending())
         {
             Struct_Attitude sample = {};
@@ -24,7 +24,7 @@ extern "C" void USB_Output_Task(void *argument)
                        (double)sample.Yaw);
         }
 
-        // 20ms 一次，即 50Hz
+        // 每 20ms 调度一次；回执优先、忙时丢包，姿态波形最高 50Hz。
         wake += 20U;
         const uint32_t now_tick = osKernelGetTickCount();
 

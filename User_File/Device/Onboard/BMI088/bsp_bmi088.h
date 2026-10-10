@@ -17,7 +17,7 @@
  *   ② 温控方案不照 H7（他们带电池电压补偿），照 basic_framework（C 板官方）：
  *      TIM10_CH1 = PF6 加热 PWM，500Hz，参数与说明见 bsp_bmi088_accel.h
  *   ③ 板级标定常量：**数据换成本板的（留空 = 不修正）**，理由见类内注释
- *   ④ 任务句柄对齐本工程 CubeMX 生成的名字 BMI088Handle
+ *   ④ SPI 完成事件交给 System/callback 转发，驱动不依赖任务句柄
  *   ⑤ 时间戳接口对齐 Sys_Get_Micros()
  * ────────────────────────────────────────────────────────────────────
  */
@@ -31,10 +31,6 @@
 #include "Gyro/bsp_bmi088_gyro.h"
 #include "alg_filter_vqf.h"
 #include "alg_quaternion.h"
-
-extern "C" {
-#include "cmsis_os2.h"
-}
 
 /* Exported types ------------------------------------------------------------*/
 
@@ -92,8 +88,8 @@ struct Struct_BMI088_VQF_Config
 /**
  * @brief 一帧完整的姿态结果：生产者一次提交、消费者一次取走
  *
- * @note  ★ 为什么需要它：姿态由 BMI088_Task 计算、1ms 任务取用，两者是
- *        【不同任务】。逐个 getter 读会读到"半帧"—— 比如第 N 帧的四元数
+ * @note  姿态由 BMI088_Task 计算，其他任务可能并发读取。
+ *        逐个 getter 读会读到"半帧"—— 比如第 N 帧的四元数
  *        配第 N-1 帧的欧拉角（写完四元数后被抢占切走）。这里把一帧的所有
  *        量打包成一个结构体，生产者只在短临界区里整体提交一次，
  *        消费者（Get_Attitude_Frame）也整体复制，杜绝半帧组合。
@@ -154,7 +150,7 @@ public:
 
     /**
      * @brief IMU 恒温控制 —— 转发给加速度计模块（见 bsp_bmi088_accel.h）
-     * @note  需要 500Hz 周期调用；1ms 任务里分频。内部有温度有效性检查，
+     * @note  需要 500Hz 周期调用；由 IMU_Service_Task 分频。内部有温度有效性检查，
      *        温度不可信时自动停热。
      */
     void Heater_Control()
@@ -169,8 +165,9 @@ public:
     /** 解算一帧（从陀螺样本队列取一个样本，跑一次 VQF）——由 BMI088_Task 调用 */
     void Calculate();
 
-    /** SPI 收完一笔时由上层分发进来（片选来自回调参数，不读全局对象） */
-    void SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin);
+    /** SPI 完成时解析数据并返回 BMI088_GYRO_SPI_RESULT_* 事件位。
+     *  无通知事件时返回 0；上层回调负责根据事件通知任务。 */
+    uint8_t SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin);
     void EXTI_Flag_Callback(uint16_t __GPIO_Pin);
     void TIM_128ms_Calculate_PeriodElapsedCallback();
     void TIM_1ms_Service_PeriodElapsedCallback();
@@ -532,7 +529,7 @@ inline float Class_BMI088::Get_VQF_Accel_Correction_Rate() const
 extern "C" {
 #endif
 
-/* 供 1ms 任务的周期回调表调用（名字和 H7_BSP 一致） */
+/* 供 IMU_Service_Task 调用；沿用 H7_BSP 的接口名称。 */
 void BMI088_TIM_128ms_Calculate_PeriodElapsedCallback();
 void BMI088_TIM_1ms_Service_PeriodElapsedCallback();
 

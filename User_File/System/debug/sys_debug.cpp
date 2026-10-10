@@ -6,7 +6,7 @@
  *          两条发送链路共用同一套格式化（FireWater 一帧 = 一行"前缀:数值,..."）：
  *            UART_Printf(huart, ...) → UART_Transmit_Data（BSP：拷贝 + 启动 DMA）
  *            USB_Printf(...)         → USB_Transmit      （BSP：交协议栈，忙则丢）
- *          发什么、多久发一次由调用方（TIM_1ms_Task）决定。
+ *          USB 输出节拍由 USB_Output_Task 控制，其他任务可提交待发回执。
  */
 
 /* Includes ------------------------------------------------------------------*/

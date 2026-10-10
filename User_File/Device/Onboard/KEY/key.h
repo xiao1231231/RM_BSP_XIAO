@@ -24,7 +24,7 @@ extern "C" {
 /** 初始化（GPIO 由 CubeMX 生成代码配好，这里无额外动作，保留统一入口） */
 void Key_Init(void);
 
-/** 按键扫描 + 长按检测，1kHz 调用（TIM_1ms_Task）。
+/** 按键扫描 + 长按检测，由 Key_Task 每 1ms 调用。
  *  长按一次性触发：按住不放不会重复，松开后重新按才算下一次 */
 void Key_Service(void);
 

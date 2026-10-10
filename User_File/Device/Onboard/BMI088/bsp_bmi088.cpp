@@ -24,14 +24,6 @@
 #include <math.h>
 #include <stddef.h>
 
-/* BMI088：样本解算通知
- * IMU_Service：FIFO 续传通知 */
-extern "C"
-{
-    extern osThreadId_t BMI088Handle;
-    extern osThreadId_t IMU_ServiceHandle;
-}
-
 /* Private variables ---------------------------------------------------------*/
 
 /** 全局唯一实例 */
@@ -312,10 +304,10 @@ bool Class_BMI088::Init()
 /**
  * @brief SPI 传输完成回调（从 bsp_spi 的分发函数进来）
  *
- * @note  ★ 这里【只解析、只置标志、只唤醒任务】，绝不发起下一笔传输 ——
+ * @note  这里只解析、更新状态并返回事件位，不发起下一笔传输 ——
  *        在 DMA 完成中断里再起一笔 DMA 会有竞态。下一笔由 EXTI / 1ms / 任务发起。
  */
-void Class_BMI088::SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
+uint8_t Class_BMI088::SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
 {
     if (CS_Port == CS1_ACCEL_GPIO_Port && CS_Pin == CS1_ACCEL_Pin)
     {
@@ -336,7 +328,7 @@ void Class_BMI088::SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
                 completed_status->Transfer_Ready_Timestamp == 0U)
             {
                 SPI_Manage_Object->Callback_Anomaly_Count++;
-                return;
+                return 0U;
             }
         }
 
@@ -370,7 +362,7 @@ void Class_BMI088::SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
              Gyro_Status.Transfer_Ready_Timestamp == 0U))
         {
             SPI_Manage_Object->Callback_Anomaly_Count++;
-            return;
+            return 0U;
         }
 
         const uint64_t gyro_ready_timestamp =
@@ -385,22 +377,16 @@ void Class_BMI088::SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
             Gyro_Status.Transfer_Start_Timestamp_Low32 = 0U;
             Gyro_Status.Transfer_Timeout_Armed = false;
 
-            /* 0x0002：通知 IMU_Service 继续读取 FIFO
-             * 0x0001：通知 BMI088 解算已入队的样本 */
             if ((gyro_result &
                  BMI088_GYRO_SPI_RESULT_FOLLOWUP_REQUIRED) != 0U)
             {
                 BMI088_Status_Mark_Ready_If_Clear(
                     Gyro_Status, Sys_Get_Micros());
-                osThreadFlagsSet(IMU_ServiceHandle, 0x0002U);
             }
-            if ((gyro_result &
-                 BMI088_GYRO_SPI_RESULT_SAMPLES_QUEUED) != 0U)
-            {
-                osThreadFlagsSet(BMI088Handle, 0x0001U);
-            }
+            return gyro_result;
         }
     }
+    return 0U;
 }
 
 /**
@@ -479,7 +465,7 @@ void Class_BMI088::TIM_1ms_Service_PeriodElapsedCallback()
  *          → 恢复动作本身就会把 HAL_SPI_ERROR_DMA 记进 ErrorCode，
  *            于是"恢复"制造了"下一次恢复"的理由，形成每秒几十次的自持循环
  *            （实测：recover 每秒 +60、why 恒为 0x18 = 启动失败|HAL报错，
- *              而且每次恢复都要 1ms 任务买单 → overrun 跟着涨）。
+ *              而且恢复占用 IMU_Service_Task 的时间，可能增加掉拍）。
  *
  *          软恢复先试一下通常就够了：所谓"HAL 报错"多数是上一次 abort 的残留，
  *          清掉即可；只有【连续 20 次】都好不了，才说明总线真的卡住 —— 那时才
@@ -1024,7 +1010,7 @@ void Class_BMI088::Set_Accel_Update_Result(const bool &__Accepted, const uint8_t
 extern "C" {
 #endif
 
-/* ── 供 1ms 任务的周期回调表调用 ── */
+/* ── 供 IMU_Service_Task 调用 ── */
 void BMI088_TIM_128ms_Calculate_PeriodElapsedCallback()
 {
     BSP_BMI088.TIM_128ms_Calculate_PeriodElapsedCallback();

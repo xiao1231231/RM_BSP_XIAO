@@ -35,9 +35,7 @@ void System_Init(void)
 
     /* USB 虚拟串口（CDC）：发送走 USB_Transmit；接收回调先给占位计数
      * （usb_frame_count，验证收链路活着），接上位协议时替换。
-     * ★ CubeMX 把 MX_USB_DEVICE_Init 放进了 __weak TIM_1ms_Task 空壳，
-     *   本工程任务是强实现覆盖那个壳 —— 那里永远不会执行，
-     *   所以初始化必须显式调（现在收在 bsp_usb 的 USB_Init 里）。 */
+     * 调度器启动前在这里显式调用 USB_Init，初始化不依赖生成任务的弱入口。 */
     USB_Init(USB_Frame_Callback);
 
     /* CAN1：PD0/PD1，1Mbps，过滤器全收 + FIFO0 收报中断（设备由电机模块注册）。

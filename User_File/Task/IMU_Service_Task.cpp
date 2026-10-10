@@ -21,14 +21,14 @@ extern "C" void IMU_Service_Task(void *argument)
             // 1ms：通信调度、兜底轮询和超时恢复
             BMI088_TIM_1ms_Service_PeriodElapsedCallback();
 
-            // 2ms：恒温控制
+            // 每 2 次周期服务执行恒温控制；正常调度约 2ms，掉拍会拉长间隔。
             if (++heat_div >= 2U)
             {
                 heat_div = 0;
                 BSP_BMI088.Heater_Control();
             }
 
-            // 128ms：请求读取温度
+            // 每 128 次周期服务请求温度；正常调度约 128ms。
             if (++temperature_div >= 128U)
             {
                 temperature_div = 0;
@@ -64,7 +64,7 @@ extern "C" void IMU_Service_Task(void *argument)
             (uint32_t)remaining
         );
 
-        // 超时也是正常返回，先排除错误码再检查通知位
+        // 等待超时属于预期情况；只在成功收到通知时续传。
         if ((flags & osFlagsError) == 0U &&
             (flags & 0x0002U) != 0U)
         {

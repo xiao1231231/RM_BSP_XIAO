@@ -2,10 +2,11 @@
  * @file    sys_attitude.cpp
  * @brief   姿态解算对外接口实现（接 H7_BSP 那套 BMI088 + VQF）
  *
- * @note    它只做三件事：
+ * @note    本模块负责：
  *            ① 把 SPI 层和 BMI088 那套接起来（初始化）
  *            ② 配置 VQF 参数
- *            ③ 每毫秒把结果搬进对外的 Attitude 结构体
+ *            ③ 每次解算后整帧发布 Attitude，并提供跨任务快照
+ *            ④ 按键触发的零偏标定、Flash 保存和 USB 回执
  *          真正的解算在 BMI088_Task 里（见 Task/BMI088_Task.cpp）。
  */
 
@@ -39,13 +40,11 @@ static bool Attitude_Sample_Is_Fresh(uint64_t sample_time_us)
  * 数据流（借鉴 26h循迹 的按键+标定状态机模式，但只保留必要环节）：
  *   KEY 模块（1kHz 扫描）检测到"长按 4 秒" → Attitude_Calibration_Request()
  *   Calibration_Task 每 1ms 推进 Attitude_Calibration_Service() 状态机，
- *   LED_Task 读取标定状态并控制灯光：
  *     IDLE ──启动前拒绝检查（IMU 就绪？电机没在转？）──
- *         → SETTLE：松手后静置 2 秒（余振过去再开始采）
- *         → SAMPLING：静止采 30000 拍（30s），蓝灯 250ms 闪烁
- *         → SAVING：静止体检过 → 写 Flash（⚠️ 全机冻结 1~2 秒）
- *         → DONE_BLINK：成功 = 红灯快闪 4 次；失败 = 红灯长亮 2 秒
- *         → IDLE：LED 交回正常绿灯闪烁
+ *         → SETTLE：启动后静置 2 秒
+ *         → SAMPLING：收集 30000 个新样本（正常调度约 30s）
+ *         → SAVING：静止体检通过后同步保存 Flash
+ *         → IDLE：提交 USB 结果回执；失败或中止也直接回到 IDLE
  *
  * 三道质量闸门（都是为了让写进 Flash 的数真的代表零偏）：
  *   ① 启动前：IMU 未就绪拒绝；有电机目标非零拒绝（板子不安静）
@@ -54,21 +53,19 @@ static bool Attitude_Sample_Is_Fresh(uint64_t sample_time_us)
  *
  * 交互约定：
  *   · 长按不足 4 秒松开 = 放弃；标定进行中再按键不响应
- *   · 采样值 = Attitude.Gyro（未扣零偏的原始陀螺 rad/s），均值即零偏，
+ *   · 采样值 = 姿态快照的 Gyro（未扣零偏的原始陀螺 rad/s），均值即零偏，
  *     语义 = "VQF 要从原始值里减掉的量"，与 Flash 存储/启动加载共用一套约定
  */
 volatile uint8_t Attitude_Bias_Source = 0U;
 
 static volatile bool s_Calibration_Requested = false;   /* KEY 长按置位 */
-static bool s_Cal_Active_Flag = false;                  /* LED 让位标志 */
 
 enum Enum_Calibration_State
 {
     CAL_IDLE = 0,       /* 无标定进行 */
-    CAL_SETTLE,         /* 松手后的静置缓冲 */
+    CAL_SETTLE,         /* 启动后的静置缓冲 */
     CAL_SAMPLING,       /* 静止采样中 */
-    CAL_SAVING,         /* 写 Flash（一拍完成，期间冻结） */
-    CAL_DONE_BLINK,     /* 结果指示（红闪/红长亮） */
+    CAL_SAVING,         /* 同步保存 Flash */
 };
 static Enum_Calibration_State s_Cal_State = CAL_IDLE;
 
@@ -95,16 +92,12 @@ static float s_Cal_M2[3] = {0.0f, 0.0f, 0.0f};
 
 static uint32_t s_Cal_Tick_Start = 0U;      /* 相位计时起点（RTOS ms 节拍） */
 static uint32_t s_Cal_Last_Sequence = 0U;   /* 已计入的姿态帧序号（判新样本） */
-static bool s_Cal_Save_Ok = false;
 
 /* 参数（都在这里调） */
-static constexpr uint32_t CAL_SETTLE_MS = 2000U;       /* 松手后的静置缓冲 */
-static constexpr uint32_t CAL_TOTAL_SAMPLES = 30000U;  /* 30s @ 1kHz */
+static constexpr uint32_t CAL_SETTLE_MS = 2000U;       /* 启动后的静置缓冲 */
+static constexpr uint32_t CAL_TOTAL_SAMPLES = 30000U;  /* 每轮最多接收一帧，正常调度约 30s */
 static constexpr uint32_t CAL_SAMPLE_TIMEOUT_MS = 45000U; /* 采样硬超时（30s + 余量） */
 static constexpr float    CAL_MAX_STD_RAD_S = 0.05f;   /* 静止体检阈值（≈2.9°/s） */
-static constexpr uint32_t CAL_RED_BLINK_MS = 125U;     /* 完成红闪半周期 */
-static constexpr uint32_t CAL_RED_BLINK_TIMES = 4U;    /* 红闪次数 */
-static constexpr uint32_t CAL_FAIL_HOLD_MS = 2000U;    /* 失败红灯长亮时长 */
 
 void Attitude_Calibration_Request(void)
 {
@@ -114,48 +107,6 @@ void Attitude_Calibration_Request(void)
     __disable_irq();
 
     s_Calibration_Requested = true;
-
-    __DMB();
-    __set_PRIMASK(primask);
-}
-
-bool Attitude_Calibration_Active(void)
-{
-    return s_Cal_Active_Flag;
-}
-
-void Attitude_Calibration_Get_Status(
-    Struct_Attitude_Calibration_Status *Out)
-{
-    if (Out == nullptr)
-    {
-        return;
-    }
-
-    const uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-
-    Out->Start_Tick = s_Cal_Tick_Start;
-
-    switch (s_Cal_State)
-    {
-    case CAL_SETTLE:
-    case CAL_SAMPLING:
-    case CAL_SAVING:
-        Out->Status = ATTITUDE_CAL_RUNNING;
-        break;
-
-    case CAL_DONE_BLINK:
-        Out->Status = s_Cal_Save_Ok
-            ? ATTITUDE_CAL_SUCCESS
-            : ATTITUDE_CAL_FAILED;
-        break;
-
-    case CAL_IDLE:
-    default:
-        Out->Status = ATTITUDE_CAL_IDLE;
-        break;
-    }
 
     __DMB();
     __set_PRIMASK(primask);
@@ -190,14 +141,12 @@ static float Calibration_Max_Std(void)
     return max_std;
 }
 
-/** 中止/失败：记原因、回执、进入结果指示（红灯长亮） */
+/** 中止/失败：记录原因、提交 USB 回执、结束本次标定。 */
 static void Calibration_Fail(uint8_t reason, const char *receipt)
 {
     s_Cal_Fail_Reason = reason;
-    s_Cal_Save_Ok = false;
     USB_Post_Printf("%s", receipt);
-    s_Cal_Tick_Start = osKernelGetTickCount();
-    s_Cal_State = CAL_DONE_BLINK;
+    s_Cal_State = CAL_IDLE;
 }
 
 void Attitude_Calibration_Service(void)
@@ -216,7 +165,6 @@ void Attitude_Calibration_Service(void)
     {
     case CAL_IDLE:
     {
-        s_Cal_Active_Flag = false;
         if (!requested) { return; }
 
         /* 启动前拒绝检查：条件不满足就不开始，原因回执出去 */
@@ -240,7 +188,6 @@ void Attitude_Calibration_Service(void)
         (void)Attitude_Get_Snapshot(&snapshot);
         s_Cal_Last_Sequence = snapshot.Sequence;
         s_Cal_Tick_Start = osKernelGetTickCount();
-        s_Cal_Active_Flag = true;
         s_Cal_State = CAL_SETTLE;
         USB_Post_Printf("cal:start,settle2s_then_sample30s");
         break;
@@ -248,7 +195,7 @@ void Attitude_Calibration_Service(void)
 
     case CAL_SETTLE:
     {
-        /* 静置缓冲：长按 4 秒后松手的余振会污染最初几拍，等板子安静再采 */
+        /* 长按事件触发后静置 2 秒；此计时不等待按键松开。 */
         if (osKernelGetTickCount() - s_Cal_Tick_Start >= CAL_SETTLE_MS)
         {
             s_Cal_Count = 0U;
@@ -324,9 +271,8 @@ void Attitude_Calibration_Service(void)
         }
         const float temperature = BSP_BMI088.Get_Temperature();
 
-        /* ⚠️ 这一拍全机冻结 1~2 秒（128KB 扇区擦除），LED/波形都会僵一下 */
-        s_Cal_Save_Ok = BSP_Flash_Calibration_Save(s_Cal_Mean, temperature);
-        if (s_Cal_Save_Ok)
+        /* 同步擦写 Flash 可能暂停任务执行，实际耗时需在目标板验证。 */
+        if (BSP_Flash_Calibration_Save(s_Cal_Mean, temperature))
         {
             /* 通过"请求"接口喂给 VQF：由解算任务在样本边界应用 ——
              * 直接从本任务写滤波器会和 BMI088_Task 的零偏估计并发（见接口注释） */
@@ -340,27 +286,7 @@ void Attitude_Calibration_Service(void)
             USB_Post_Printf("cal:done,flash_fail");
         }
 
-        s_Cal_Tick_Start = osKernelGetTickCount();
-        s_Cal_State = CAL_DONE_BLINK;
-        break;
-    }
-
-    case CAL_DONE_BLINK:
-    {
-        const uint32_t elapsed =
-            osKernelGetTickCount() - s_Cal_Tick_Start;
-
-        // 成功保持 1 秒，失败保持 2 秒
-        // 灯光显示由 LED_Task 负责
-        const uint32_t duration = s_Cal_Save_Ok
-            ? CAL_RED_BLINK_MS * CAL_RED_BLINK_TIMES * 2U
-            : CAL_FAIL_HOLD_MS;
-
-        if (elapsed >= duration)
-        {
-            s_Cal_State = CAL_IDLE;
-        }
-
+        s_Cal_State = CAL_IDLE;
         break;
     }
     }

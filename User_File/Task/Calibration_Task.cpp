@@ -11,7 +11,7 @@ extern "C" void Calibration_Task(void *argument)
 
     for (;;)
     {
-        // 推进标定：静置、采样、检查、保存和结果指示
+        // 推进标定：静置、采样、检查、保存，结果提交到 USB。
         Attitude_Calibration_Service();
 
         wake += 1U;

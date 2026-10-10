@@ -5,6 +5,14 @@
 #include "bsp_spi.h"
 #include "bsp_bmi088.h"
 #include "bsp_can.h"
+#include "cmsis_os2.h"
+
+// CubeMX 生成的任务句柄只在系统层用于通知转发。
+extern "C"
+{
+    extern osThreadId_t BMI088Handle;
+    extern osThreadId_t IMU_ServiceHandle;
+}
 
 /* ══════════════ USART6 收帧占位 ══════════════
  *
@@ -78,7 +86,7 @@ extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
  * bsp_spi 层每收完一笔就回调这里 —— ★ 运行在 DMA 完成中断上下文。
  * 分发只看回调参数里带的片选（这一笔传输是谁的），不读任何全局对象 ——
  * 与 bsp_spi 内部"事务字段何时清空"的顺序彻底无关。
- * 之后由 bsp_bmi088 里的回调去解析数据、置状态、唤醒 BMI088_Task。
+ * 设备层解析数据并返回事件位；这里转发样本解算和 FIFO 续传通知。
  */
 extern "C" void SPI1_Callback(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer,
                               uint16_t Tx_Length, uint16_t Rx_Length,
@@ -92,7 +100,17 @@ extern "C" void SPI1_Callback(uint8_t *Tx_Buffer, uint8_t *Rx_Buffer,
     if ((CS_Port == CS1_ACCEL_GPIO_Port && CS_Pin == CS1_ACCEL_Pin) ||
         (CS_Port == CS1_GYRO_GPIO_Port  && CS_Pin == CS1_GYRO_Pin))
     {
-        BSP_BMI088.SPI_RxCpltCallback(CS_Port, CS_Pin);
+        const uint8_t events = BSP_BMI088.SPI_RxCpltCallback(CS_Port, CS_Pin);
+        if ((events & BMI088_GYRO_SPI_RESULT_FOLLOWUP_REQUIRED) != 0U &&
+            IMU_ServiceHandle != nullptr)
+        {
+            (void)osThreadFlagsSet(IMU_ServiceHandle, 0x0002U);
+        }
+        if ((events & BMI088_GYRO_SPI_RESULT_SAMPLES_QUEUED) != 0U &&
+            BMI088Handle != nullptr)
+        {
+            (void)osThreadFlagsSet(BMI088Handle, 0x0001U);
+        }
     }
 }
 

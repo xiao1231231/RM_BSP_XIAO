@@ -36,7 +36,7 @@ static USB_Rx_Callback usb_rx_callback = nullptr;
  *
  * 覆盖时机：只有协议栈空闲（TxState == 0，上一笔已全部搬进 FIFO）才覆盖。
  * 关中断窗口把"查空闲 → 拷贝 → 提交"做成一个原子事件：既挡住 TX 完成中断
- * 改 TxState，也挡住其它调用者并发进来（当前只有 1ms 任务调，属加固）。
+ * 改 TxState，也挡住其它调用者并发进来（当前由 USB_Output_Task 调用）。
  */
 #define USB_TX_BUFFER_SIZE  128U        /* ≥ 最大行（sys_debug 的 DEBUG_LINE_MAX） */
 alignas(4) static uint8_t usb_tx_buffer[USB_TX_BUFFER_SIZE];
@@ -45,9 +45,7 @@ void USB_Init(USB_Rx_Callback Callback)
 {
     usb_rx_callback = Callback;
 
-    /* ★ 为什么必须在这里调：CubeMX 把 MX_USB_DEVICE_Init 放进了 __weak
-     * TIM_1ms_Task 空壳（freertos.c），而本工程的任务是强实现覆盖那个壳
-     * —— 那里的初始化永远不会执行，USB 将完全不动。 */
+    // System_Init 在调度器启动前显式初始化 USB。
     MX_USB_DEVICE_Init();
 }
 
