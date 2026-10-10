@@ -53,6 +53,24 @@ void Attitude_Calibration_Request(void);
  *  ⚠️ 写 Flash 那一拍全机冻结 1~2 秒，只在台架标定场景发生 */
 void Attitude_Calibration_Service(void);
 
+typedef enum
+{
+    ATTITUDE_CAL_IDLE = 0,
+    ATTITUDE_CAL_RUNNING,
+    ATTITUDE_CAL_SUCCESS,
+    ATTITUDE_CAL_FAILED
+} Enum_Attitude_Calibration_Status;
+
+typedef struct
+{
+    Enum_Attitude_Calibration_Status Status;
+    uint32_t Start_Tick;  // 当前阶段的起始时间
+} Struct_Attitude_Calibration_Status;
+
+// 跨任务获取标定状态，供 LED 任务使用
+void Attitude_Calibration_Get_Status(
+    Struct_Attitude_Calibration_Status *Out);
+
 /** 姿态输出结构。除三轴姿态外，另带两项 VQF 独有的诊断量：零偏估计和静止标志 */
 typedef struct
 {

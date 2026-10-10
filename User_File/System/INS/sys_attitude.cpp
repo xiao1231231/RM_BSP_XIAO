@@ -14,10 +14,9 @@
 #include "bsp_spi.h"        /* SPI_Init */
 #include "bsp_bmi088.h"     /* BSP_BMI088 */
 #include "bsp_flash.h"      /* 零偏标定的 Flash 存储 */
-#include "sys_debug.h"      /* USB_Printf —— 标定回执 */
+#include "sys_debug.h"      /* USB_Post_Printf —— 提交标定回执 */
 #include "sys_timestamp.h"  /* 样本新鲜度使用单调微秒时间 */
 #include "dji_motor.h"      /* DJI_Motor_Any_Target_Active —— 标定前检查电机空闲 */
-#include "led.h"            /* 校准中的蓝闪 / 完成后的红闪 */
 #include "callback.h"       /* SPI1_Callback */
 #include "spi.h"            /* hspi1 —— BMI088 挂在这条 SPI 上 */
 
@@ -39,7 +38,8 @@ static bool Attitude_Sample_Is_Fresh(uint64_t sample_time_us)
  *
  * 数据流（借鉴 26h循迹 的按键+标定状态机模式，但只保留必要环节）：
  *   KEY 模块（1kHz 扫描）检测到"长按 4 秒" → Attitude_Calibration_Request()
- *   1ms 任务的 Attitude_Calibration_Service() 状态机：
+ *   Calibration_Task 每 1ms 推进 Attitude_Calibration_Service() 状态机，
+ *   LED_Task 读取标定状态并控制灯光：
  *     IDLE ──启动前拒绝检查（IMU 就绪？电机没在转？）──
  *         → SETTLE：松手后静置 2 秒（余振过去再开始采）
  *         → SAMPLING：静止采 30000 拍（30s），蓝灯 250ms 闪烁
@@ -94,9 +94,7 @@ static float s_Cal_Mean[3] = {0.0f, 0.0f, 0.0f};
 static float s_Cal_M2[3] = {0.0f, 0.0f, 0.0f};
 
 static uint32_t s_Cal_Tick_Start = 0U;      /* 相位计时起点（RTOS ms 节拍） */
-static uint32_t s_Cal_Blink_Tick = 0U;
 static uint32_t s_Cal_Last_Sequence = 0U;   /* 已计入的姿态帧序号（判新样本） */
-static bool s_Cal_Blink_Level = false;
 static bool s_Cal_Save_Ok = false;
 
 /* 参数（都在这里调） */
@@ -104,16 +102,21 @@ static constexpr uint32_t CAL_SETTLE_MS = 2000U;       /* 松手后的静置缓�
 static constexpr uint32_t CAL_TOTAL_SAMPLES = 30000U;  /* 30s @ 1kHz */
 static constexpr uint32_t CAL_SAMPLE_TIMEOUT_MS = 45000U; /* 采样硬超时（30s + 余量） */
 static constexpr float    CAL_MAX_STD_RAD_S = 0.05f;   /* 静止体检阈值（≈2.9°/s） */
-static constexpr uint32_t CAL_BLUE_BLINK_MS = 250U;    /* 采样中蓝闪半周期 */
 static constexpr uint32_t CAL_RED_BLINK_MS = 125U;     /* 完成红闪半周期 */
 static constexpr uint32_t CAL_RED_BLINK_TIMES = 4U;    /* 红闪次数 */
 static constexpr uint32_t CAL_FAIL_HOLD_MS = 2000U;    /* 失败红灯长亮时长 */
 
 void Attitude_Calibration_Request(void)
 {
-    if (s_Cal_State != CAL_IDLE) { return; }              /* 进行中：忽略 */
     if (!BSP_BMI088.Is_Initialized()) { return; }         /* IMU 没就绪：忽略 */
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
     s_Calibration_Requested = true;
+
+    __DMB();
+    __set_PRIMASK(primask);
 }
 
 bool Attitude_Calibration_Active(void)
@@ -121,19 +124,44 @@ bool Attitude_Calibration_Active(void)
     return s_Cal_Active_Flag;
 }
 
-/* ── 状态机内部辅助 ── */
-
-/** 蓝灯 250ms 闪烁（静置缓冲与采样期共用） */
-static void Calibration_Blink_Blue(void)
+void Attitude_Calibration_Get_Status(
+    Struct_Attitude_Calibration_Status *Out)
 {
-    const uint32_t now = osKernelGetTickCount();
-    if (now - s_Cal_Blink_Tick >= CAL_BLUE_BLINK_MS)
+    if (Out == nullptr)
     {
-        s_Cal_Blink_Tick = now;
-        s_Cal_Blink_Level = !s_Cal_Blink_Level;
-        if (s_Cal_Blink_Level) { LED_Blue(); } else { LED_Off(); }
+        return;
     }
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    Out->Start_Tick = s_Cal_Tick_Start;
+
+    switch (s_Cal_State)
+    {
+    case CAL_SETTLE:
+    case CAL_SAMPLING:
+    case CAL_SAVING:
+        Out->Status = ATTITUDE_CAL_RUNNING;
+        break;
+
+    case CAL_DONE_BLINK:
+        Out->Status = s_Cal_Save_Ok
+            ? ATTITUDE_CAL_SUCCESS
+            : ATTITUDE_CAL_FAILED;
+        break;
+
+    case CAL_IDLE:
+    default:
+        Out->Status = ATTITUDE_CAL_IDLE;
+        break;
+    }
+
+    __DMB();
+    __set_PRIMASK(primask);
 }
+
+/* ── 状态机内部辅助 ── */
 
 /** Welford 单步：增量更新均值与 M2（数值稳定，见变量区注释） */
 static void Calibration_Welford_Update(const float gyro[3])
@@ -167,59 +195,68 @@ static void Calibration_Fail(uint8_t reason, const char *receipt)
 {
     s_Cal_Fail_Reason = reason;
     s_Cal_Save_Ok = false;
-    USB_Printf("%s", receipt);
+    USB_Post_Printf("%s", receipt);
     s_Cal_Tick_Start = osKernelGetTickCount();
-    s_Cal_Blink_Level = false;
     s_Cal_State = CAL_DONE_BLINK;
 }
 
 void Attitude_Calibration_Service(void)
 {
+    // 取走请求并清零，避免两个任务在此期间交叉访问
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const bool requested = s_Calibration_Requested;
+    s_Calibration_Requested = false;
+
+    __DMB();
+    __set_PRIMASK(primask);
+
     switch (s_Cal_State)
     {
     case CAL_IDLE:
     {
         s_Cal_Active_Flag = false;
-        if (!s_Calibration_Requested) { return; }
-        s_Calibration_Requested = false;
+        if (!requested) { return; }
 
         /* 启动前拒绝检查：条件不满足就不开始，原因回执出去 */
         if (!BSP_BMI088.Is_Initialized())
         {
             s_Cal_Fail_Reason = CAL_FAIL_IMU_NOT_READY;
-            USB_Printf("cal:reject,imu_not_ready");
+            USB_Post_Printf("cal:reject,imu_not_ready");
             return;
         }
         if (DJI_Motor_Any_Target_Active())
         {
             s_Cal_Fail_Reason = CAL_FAIL_MOTOR_ACTIVE;
-            USB_Printf("cal:reject,motor_active");
+            USB_Post_Printf("cal:reject,motor_active");
             return;
         }
 
         s_Cal_Count = 0U;
         s_Cal_Mean[0] = s_Cal_Mean[1] = s_Cal_Mean[2] = 0.0f;
         s_Cal_M2[0] = s_Cal_M2[1] = s_Cal_M2[2] = 0.0f;
-        s_Cal_Last_Sequence = Attitude.Sequence;
+        Struct_Attitude snapshot = {};
+        (void)Attitude_Get_Snapshot(&snapshot);
+        s_Cal_Last_Sequence = snapshot.Sequence;
         s_Cal_Tick_Start = osKernelGetTickCount();
-        s_Cal_Blink_Tick = s_Cal_Tick_Start;
-        s_Cal_Blink_Level = false;
         s_Cal_Active_Flag = true;
         s_Cal_State = CAL_SETTLE;
-        USB_Printf("cal:start,settle2s_then_sample30s");
+        USB_Post_Printf("cal:start,settle2s_then_sample30s");
         break;
     }
 
     case CAL_SETTLE:
     {
         /* 静置缓冲：长按 4 秒后松手的余振会污染最初几拍，等板子安静再采 */
-        Calibration_Blink_Blue();
         if (osKernelGetTickCount() - s_Cal_Tick_Start >= CAL_SETTLE_MS)
         {
             s_Cal_Count = 0U;
             s_Cal_Mean[0] = s_Cal_Mean[1] = s_Cal_Mean[2] = 0.0f;
             s_Cal_M2[0] = s_Cal_M2[1] = s_Cal_M2[2] = 0.0f;
-            s_Cal_Last_Sequence = Attitude.Sequence;
+            Struct_Attitude snapshot = {};
+            (void)Attitude_Get_Snapshot(&snapshot);
+            s_Cal_Last_Sequence = snapshot.Sequence;
             s_Cal_Tick_Start = osKernelGetTickCount();
             s_Cal_State = CAL_SAMPLING;
         }
@@ -241,8 +278,6 @@ void Attitude_Calibration_Service(void)
             Calibration_Fail(CAL_FAIL_SAMPLE_TIMEOUT, "cal:abort,sample_timeout");
             break;
         }
-
-        Calibration_Blink_Blue();
 
         Struct_Attitude sample;
         if (!Attitude_Get_Snapshot(&sample))
@@ -297,56 +332,35 @@ void Attitude_Calibration_Service(void)
              * 直接从本任务写滤波器会和 BMI088_Task 的零偏估计并发（见接口注释） */
             BSP_BMI088.Request_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(s_Cal_Mean));
             Attitude_Bias_Source = 2U;
-            USB_Printf("cal:done,ok,t=%.1f", (double)temperature);
+            USB_Post_Printf("cal:done,ok,t=%.1f", (double)temperature);
         }
         else
         {
             s_Cal_Fail_Reason = CAL_FAIL_FLASH;
-            USB_Printf("cal:done,flash_fail");
+            USB_Post_Printf("cal:done,flash_fail");
         }
 
         s_Cal_Tick_Start = osKernelGetTickCount();
-        s_Cal_Blink_Level = false;
         s_Cal_State = CAL_DONE_BLINK;
         break;
     }
 
     case CAL_DONE_BLINK:
     {
-        const uint32_t elapsed = osKernelGetTickCount() - s_Cal_Tick_Start;
+        const uint32_t elapsed =
+            osKernelGetTickCount() - s_Cal_Tick_Start;
 
-        if (s_Cal_Save_Ok)
+        // 成功保持 1 秒，失败保持 2 秒
+        // 灯光显示由 LED_Task 负责
+        const uint32_t duration = s_Cal_Save_Ok
+            ? CAL_RED_BLINK_MS * CAL_RED_BLINK_TIMES * 2U
+            : CAL_FAIL_HOLD_MS;
+
+        if (elapsed >= duration)
         {
-            /* 成功：红灯快闪 4 次（125ms 亮 + 125ms 灭），然后交回绿灯 */
-            const uint32_t index = elapsed / CAL_RED_BLINK_MS;
-            if (index >= CAL_RED_BLINK_TIMES * 2U)
-            {
-                LED_Off();
-                s_Cal_State = CAL_IDLE;
-            }
-            else
-            {
-                const bool on = (index % 2U) == 0U;
-                if (on != s_Cal_Blink_Level)
-                {
-                    s_Cal_Blink_Level = on;
-                    if (on) { LED_Red(); } else { LED_Off(); }
-                }
-            }
+            s_Cal_State = CAL_IDLE;
         }
-        else
-        {
-            /* 失败：红灯长亮 2 秒（与成功态可区分），然后交回绿灯 */
-            if (elapsed >= CAL_FAIL_HOLD_MS)
-            {
-                LED_Off();
-                s_Cal_State = CAL_IDLE;
-            }
-            else
-            {
-                LED_Red();
-            }
-        }
+
         break;
     }
     }

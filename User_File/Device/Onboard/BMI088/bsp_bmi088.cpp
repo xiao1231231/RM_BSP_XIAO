@@ -24,9 +24,13 @@
 #include <math.h>
 #include <stddef.h>
 
-/* 本工程 CubeMX 生成的任务句柄（名字跟着 CubeMX 里的 Task Name = BMI088 走）。
- * 由它来唤醒 BMI088_Task：0x0001 = 有样本入队，0x0002 = 还需要继续读 FIFO */
-extern "C" { extern osThreadId_t BMI088Handle; }
+/* BMI088：样本解算通知
+ * IMU_Service：FIFO 续传通知 */
+extern "C"
+{
+    extern osThreadId_t BMI088Handle;
+    extern osThreadId_t IMU_ServiceHandle;
+}
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -381,20 +385,19 @@ void Class_BMI088::SPI_RxCpltCallback(GPIO_TypeDef *CS_Port, uint16_t CS_Pin)
             Gyro_Status.Transfer_Start_Timestamp_Low32 = 0U;
             Gyro_Status.Transfer_Timeout_Armed = false;
 
-            /* 唤醒 BMI088 任务：
-             *  0x0002 = FIFO 还没读完，任务里要接着发下一笔
-             *  0x0001 = 有新样本入队，任务里要跑 Calculate() */
+            /* 0x0002：通知 IMU_Service 继续读取 FIFO
+             * 0x0001：通知 BMI088 解算已入队的样本 */
             if ((gyro_result &
                  BMI088_GYRO_SPI_RESULT_FOLLOWUP_REQUIRED) != 0U)
             {
                 BMI088_Status_Mark_Ready_If_Clear(
                     Gyro_Status, Sys_Get_Micros());
-                osThreadFlagsSet(BMI088Handle, 0x0002);
+                osThreadFlagsSet(IMU_ServiceHandle, 0x0002U);
             }
             if ((gyro_result &
                  BMI088_GYRO_SPI_RESULT_SAMPLES_QUEUED) != 0U)
             {
-                osThreadFlagsSet(BMI088Handle, 0x0001);
+                osThreadFlagsSet(BMI088Handle, 0x0001U);
             }
         }
     }

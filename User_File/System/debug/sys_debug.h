@@ -26,6 +26,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "main.h"       /* UART_HandleTypeDef —— 句柄在这里定义 */
 
 /** 单行最大长度（含 '\0'）。超出被截断，不会溢出 */
@@ -58,6 +59,13 @@ void UART_Printf(UART_HandleTypeDef *huart, const char *Fmt, ...);
  *        USB 没插电脑 / 未枚举时安全：底层返回忙、本帧丢弃，不阻塞不崩溃。
  */
 void USB_Printf(const char *Fmt, ...);
+
+// 提交一条待发送文本，格式和 USB_Printf 相同，仅在任务上下文调用
+void USB_Post_Printf(const char *Fmt, ...);
+
+// 仅由 USB 输出任务调用
+// true：取走了一条文本并尝试发送；false：没有待发文本
+bool USB_Send_Pending(void);
 
 #ifdef __cplusplus
 }

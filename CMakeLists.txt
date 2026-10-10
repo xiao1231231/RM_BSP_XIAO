@@ -57,9 +57,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/CAN/bsp_can.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/USB/bsp_usb.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/BSP/FLASH/bsp_flash.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/TIM_1ms_Task.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/BMI088_Task.cpp
-
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/Motor_Task.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/System_Service_Task.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/IMU_Service_Task.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/Key_Task.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/Calibration_Task.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/LED_Task.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/USB_Output_Task.cpp
         # ── DJI 电机（3508/C620）──
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Motor/DJImotor/dji_motor.cpp
 

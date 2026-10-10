@@ -17,7 +17,7 @@
 /* Includes ------------------------------------------------------------------*/
 
 #include "bsp_bmi088.h"
-
+#include "sys_attitude.h"
 #include "cmsis_os2.h"
 
 /* Function prototypes -------------------------------------------------------*/
@@ -39,15 +39,14 @@ extern "C" void BMI088_Task(void *argument)
 
     for (;;)
     {
-        /* 0x0001 = 有样本入队（要 Calculate）
-         * 0x0002 = FIFO 没读完（要接着发下一笔传输）
-         * 任意一个先到就醒 */
+        // 只等待样本入队通知
         const uint32_t flags =
-            osThreadFlagsWait(0x0003, osFlagsWaitAny, osWaitForever);
+            osThreadFlagsWait(0x0001U, osFlagsWaitAny, osWaitForever);
 
-        if ((flags & 0x0002) != 0U)
+        if ((flags & osFlagsError) != 0U)
         {
-            BSP_BMI088.BMI088_Service_Transfer(true);
+            osDelay(1U);
+            continue;
         }
 
         if (BSP_BMI088.BMI088_Gyro.Get_Queue_Depth() != 0U)
@@ -56,6 +55,7 @@ extern "C" void BMI088_Task(void *argument)
             do
             {
                 BSP_BMI088.Calculate();
+                Attitude_Task();
                 /* 连算 3 帧就让出一次 CPU：单帧 ≈155µs，3 帧 ≈465µs，
                  * 既算得动又不会让 1ms 任务等过 1ms */
                 if (--budget == 0U)

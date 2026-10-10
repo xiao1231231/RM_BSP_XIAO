@@ -48,12 +48,12 @@
 /* USER CODE BEGIN Variables */
 
 /* USER CODE END Variables */
-/* Definitions for TIM_1ms */
-osThreadId_t TIM_1msHandle;
-const osThreadAttr_t TIM_1ms_attributes = {
-  .name = "TIM_1ms",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+/* Definitions for System_Service */
+osThreadId_t System_ServiceHandle;
+const osThreadAttr_t System_Service_attributes = {
+  .name = "System_Service",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for BMI088 */
 osThreadId_t BMI088Handle;
@@ -62,14 +62,62 @@ const osThreadAttr_t BMI088_attributes = {
   .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for Motor */
+osThreadId_t MotorHandle;
+const osThreadAttr_t Motor_attributes = {
+  .name = "Motor",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal2,
+};
+/* Definitions for IMU_Service */
+osThreadId_t IMU_ServiceHandle;
+const osThreadAttr_t IMU_Service_attributes = {
+  .name = "IMU_Service",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for Key */
+osThreadId_t KeyHandle;
+const osThreadAttr_t Key_attributes = {
+  .name = "Key",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
+};
+/* Definitions for Calibration */
+osThreadId_t CalibrationHandle;
+const osThreadAttr_t Calibration_attributes = {
+  .name = "Calibration",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for LED */
+osThreadId_t LEDHandle;
+const osThreadAttr_t LED_attributes = {
+  .name = "LED",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for USB_Output */
+osThreadId_t USB_OutputHandle;
+const osThreadAttr_t USB_Output_attributes = {
+  .name = "USB_Output",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
 /* USER CODE END FunctionPrototypes */
 
-void TIM_1ms_Task(void *argument);
+void System_Service_Task(void *argument);
 void BMI088_Task(void *argument);
+void Motor_Task(void *argument);
+void IMU_Service_Task(void *argument);
+void Key_Task(void *argument);
+void Calibration_Task(void *argument);
+void LED_Task(void *argument);
+void USB_Output_Task(void *argument);
 
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -150,11 +198,29 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of TIM_1ms */
-  TIM_1msHandle = osThreadNew(TIM_1ms_Task, NULL, &TIM_1ms_attributes);
+  /* creation of System_Service */
+  System_ServiceHandle = osThreadNew(System_Service_Task, NULL, &System_Service_attributes);
 
   /* creation of BMI088 */
   BMI088Handle = osThreadNew(BMI088_Task, NULL, &BMI088_attributes);
+
+  /* creation of Motor */
+  MotorHandle = osThreadNew(Motor_Task, NULL, &Motor_attributes);
+
+  /* creation of IMU_Service */
+  IMU_ServiceHandle = osThreadNew(IMU_Service_Task, NULL, &IMU_Service_attributes);
+
+  /* creation of Key */
+  KeyHandle = osThreadNew(Key_Task, NULL, &Key_attributes);
+
+  /* creation of Calibration */
+  CalibrationHandle = osThreadNew(Calibration_Task, NULL, &Calibration_attributes);
+
+  /* creation of LED */
+  LEDHandle = osThreadNew(LED_Task, NULL, &LED_attributes);
+
+  /* creation of USB_Output */
+  USB_OutputHandle = osThreadNew(USB_Output_Task, NULL, &USB_Output_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -166,24 +232,24 @@ void MX_FREERTOS_Init(void) {
 
 }
 
-/* USER CODE BEGIN Header_TIM_1ms_Task */
+/* USER CODE BEGIN Header_System_Service_Task */
 /**
-  * @brief  Function implementing the TIM_1ms thread.
+  * @brief  Function implementing the System_Service thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_TIM_1ms_Task */
-__weak void TIM_1ms_Task(void *argument)
+/* USER CODE END Header_System_Service_Task */
+__weak void System_Service_Task(void *argument)
 {
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
-  /* USER CODE BEGIN TIM_1ms_Task */
+  /* USER CODE BEGIN System_Service_Task */
   /* Infinite loop */
   for(;;)
   {
     osDelay(1);
   }
-  /* USER CODE END TIM_1ms_Task */
+  /* USER CODE END System_Service_Task */
 }
 
 /* USER CODE BEGIN Header_BMI088_Task */
@@ -202,6 +268,114 @@ __weak void BMI088_Task(void *argument)
     osDelay(1);
   }
   /* USER CODE END BMI088_Task */
+}
+
+/* USER CODE BEGIN Header_Motor_Task */
+/**
+* @brief Function implementing the Motor thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Motor_Task */
+__weak void Motor_Task(void *argument)
+{
+  /* USER CODE BEGIN Motor_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END Motor_Task */
+}
+
+/* USER CODE BEGIN Header_IMU_Service_Task */
+/**
+* @brief Function implementing the IMU_Service thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_IMU_Service_Task */
+__weak void IMU_Service_Task(void *argument)
+{
+  /* USER CODE BEGIN IMU_Service_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END IMU_Service_Task */
+}
+
+/* USER CODE BEGIN Header_Key_Task */
+/**
+* @brief Function implementing the Key thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Key_Task */
+__weak void Key_Task(void *argument)
+{
+  /* USER CODE BEGIN Key_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END Key_Task */
+}
+
+/* USER CODE BEGIN Header_Calibration_Task */
+/**
+* @brief Function implementing the Calibration thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Calibration_Task */
+__weak void Calibration_Task(void *argument)
+{
+  /* USER CODE BEGIN Calibration_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END Calibration_Task */
+}
+
+/* USER CODE BEGIN Header_LED_Task */
+/**
+* @brief Function implementing the LED thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_LED_Task */
+__weak void LED_Task(void *argument)
+{
+  /* USER CODE BEGIN LED_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END LED_Task */
+}
+
+/* USER CODE BEGIN Header_USB_Output_Task */
+/**
+* @brief Function implementing the USB_Output thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_USB_Output_Task */
+__weak void USB_Output_Task(void *argument)
+{
+  /* USER CODE BEGIN USB_Output_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END USB_Output_Task */
 }
 
 /* Private application code --------------------------------------------------*/

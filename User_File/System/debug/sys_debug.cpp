@@ -20,6 +20,10 @@
 #include <stdarg.h>         /* va_list */
 #include <string.h>         /* strlen */
 
+// ponytail: 只保留最新一条待发文本；需要保留连续多条时改用队列。
+static char s_USB_Pending_Line[DEBUG_LINE_MAX];
+static uint16_t s_USB_Pending_Length = 0U;
+
 /* Private functions ---------------------------------------------------------*/
 
 /**
@@ -79,4 +83,57 @@ void USB_Printf(const char *Fmt, ...)
 
   /* USB 未连接电脑时底层按忙处理、本包丢弃 —— 不阻塞也不崩溃 */
   (void)USB_Transmit((const uint8_t *)line, used);
+}
+
+void USB_Post_Printf(const char *Fmt, ...)
+{
+  if (Fmt == NULL)
+  {
+    return;
+  }
+
+  char line[DEBUG_LINE_MAX];
+
+  va_list ap;
+  va_start(ap, Fmt);
+  const uint16_t used = debug_format_line(line, sizeof(line), Fmt, ap);
+  va_end(ap);
+
+  // 格式化完成后，再短暂保护共享缓冲
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+
+  memcpy(s_USB_Pending_Line, line, used);
+  s_USB_Pending_Length = used;
+
+  __DMB();
+  __set_PRIMASK(primask);
+}
+
+bool USB_Send_Pending(void)
+{
+  char line[DEBUG_LINE_MAX];
+
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+
+  const uint16_t length = s_USB_Pending_Length;
+
+  if (length != 0U)
+  {
+    memcpy(line, s_USB_Pending_Line, length);
+    s_USB_Pending_Length = 0U;
+  }
+
+  __DMB();
+  __set_PRIMASK(primask);
+
+  if (length == 0U)
+  {
+    return false;
+  }
+
+  // 沿用原来的非阻塞发送、忙时丢弃规则
+  (void)USB_Transmit((const uint8_t *)line, length);
+  return true;
 }
