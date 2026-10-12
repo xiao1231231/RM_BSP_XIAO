@@ -9,6 +9,7 @@
 #include "bsp_uart.h"
 #include "bsp_can.h"
 #include "dji_motor.h"
+#include "dt7.h"
 #include "callback.h"
 #include "led.h"
 #include "key.h"
@@ -33,13 +34,16 @@ void System_Init(void)
      * 接了真实外设（上位机/视觉）后把解析逻辑写进去。 */
     UART_Init(&huart6, USART6_Frame_Callback);
 
+    // USART3：DT7/DR16，连接 C 板专用 DBUS 接口
+    DT7_Init(&huart3);
+
     /* USB 虚拟串口（CDC）：发送走 USB_Transmit；接收回调先给占位计数
      * （usb_frame_count，验证收链路活着），接上位协议时替换。
      * 调度器启动前在这里显式调用 USB_Init，初始化不依赖生成任务的弱入口。 */
     USB_Init(USB_Frame_Callback);
 
     /* CAN1：PD0/PD1，1Mbps，过滤器全收 + FIFO0 收报中断（设备由电机模块注册）。
-     * ★ CAN 起不来 = 四个电机全部不可用，所以失败必须能听见（长鸣一声）——
+     * ★ CAN 起不来 = 总线上电机不可用，所以失败必须能听见（长鸣一声）——
      *   否则现象是"电机没反应"，排查会先去怀疑电调和接线。 */
     if (!CAN_Init(&hcan1))
     {
@@ -54,6 +58,18 @@ void System_Init(void)
     DJI_Motor_Create(DJI_MOTOR_2, 15.0f, 2.0f, 0.0f);
     DJI_Motor_Create(DJI_MOTOR_3, 15.0f, 2.0f, 0.0f);
     DJI_Motor_Create(DJI_MOTOR_4, 15.0f, 2.0f, 0.0f);
+
+    /* GM6020 ×2（拨码 ID 1、2）：电流控制，目标转速默认零。
+     * 先用零增益验证反馈，之后只调整 1 号的 Kp/Ki/Kd 和任务中的目标转速。
+     * 固件 >= 1.0.11.2，用 RoboMaster Assistant >= 2.7 开启电流环开关。 */
+    Class_DJI_Motor *gm6020_1 = DJI_Motor_Create(
+        DJI_MOTOR_1, 15.0f, 0.0f, 0.0f, DJI_MOTOR_TYPE_GM6020);
+    Class_DJI_Motor *gm6020_2 = DJI_Motor_Create(
+        DJI_MOTOR_2, 0.0f, 0.0f, 0.0f, DJI_MOTOR_TYPE_GM6020);
+    if (gm6020_1 == nullptr || gm6020_2 == nullptr)
+    {
+        Buzzer_Beep(2000.0f, 0.5f);
+    }
 
     /* 姿态解算（SPI 层 + BMI088 + VQF）。放在调度器启动前 ——
      * 里面是阻塞的：配置逐步读回校验（失败重试）+ 开机零偏标定 1 秒。

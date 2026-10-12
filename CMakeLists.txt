@@ -65,8 +65,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/Calibration_Task.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/LED_Task.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/USB_Output_Task.cpp
-        # ── DJI 电机（3508/C620）──
+        # ── DJI 电机（3508/C620、GM6020 电流模式）──
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Motor/DJImotor/dji_motor.cpp
+
+        # DT7 遥控器
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Remote/DT7/dt7.cpp
 
         # ── BMI088 驱动（移植自 H7_BSP / USTC-RoboWalker）──
         # 结构：Gyro（FIFO 读取 + 时间戳重建 + 样本队列）
@@ -117,6 +120,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         User_File/Middleware/BSP/USB
         User_File/Middleware/BSP/FLASH
         User_File/Device/Peripheral/Motor/DJImotor
+        User_File/Device/Peripheral/Remote/DT7
 
         # ── BMI088 + 姿态解算 ──
         User_File/Device/Onboard/BMI088
