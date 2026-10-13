@@ -71,6 +71,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         # DT7 遥控器
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Remote/DT7/dt7.cpp
 
+        # 底盘应用
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Application/Chassis/chassis.cpp
+
         # ── BMI088 驱动（移植自 H7_BSP / USTC-RoboWalker）──
         # 结构：Gyro（FIFO 读取 + 时间戳重建 + 样本队列）
         #       Accel（数据 + 温度读取 + TIM10 恒温 PWM）
@@ -121,6 +124,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         User_File/Middleware/BSP/FLASH
         User_File/Device/Peripheral/Motor/DJImotor
         User_File/Device/Peripheral/Remote/DT7
+        User_File/Application/Chassis
 
         # ── BMI088 + 姿态解算 ──
         User_File/Device/Onboard/BMI088
