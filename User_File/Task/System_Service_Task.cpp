@@ -22,6 +22,7 @@ extern "C" void System_Service_Task(void *argument)
 
         // CAN 总线状态巡检
         BSP_CAN_Service_PeriodElapsedCallback(&hcan1);
+        BSP_CAN_Service_PeriodElapsedCallback(&hcan2);
 
         wake += 1U;
         const uint32_t now_tick = osKernelGetTickCount();

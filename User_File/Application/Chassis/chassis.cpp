@@ -1,5 +1,6 @@
 #include "chassis.h"
-#include <cmath>  // isfinite：检查有限数；fabs：取绝对值；fmax：取较大值。
+#include "dt7.h"
+#include <cmath>  // isfinite：检查有限数；fabs：取绝对值；fmax/fmin：取较大/较小值。
 
 // 麦轮逆运动学：把整车希望达到的运动速度，换算成四个轮子的目标转速。
 // 适用条件：已确认的 45° 麦轮安装方式，绕底盘几何中心旋转。
@@ -83,4 +84,65 @@ void Chassis_Mecanum_Inverse(float vx, float vy, float wz, float wheel_rpm[4])
     {
         wheel_rpm[i] = rpm[i] * scale;
     }
+}
+
+// 摇杆原始值约为 -660～660，转换成 -1～1。
+static float Chassis_Normalize_Channel(int16_t channel)
+{
+    // 中心死区，避免摇杆回中后的微小抖动产生运动指令。
+    if (channel >= -20 && channel <= 20)
+    {
+        return 0.0f;
+    }
+
+    const float value = channel / 660.0f;
+
+    // 实际通道值可能稍超出标称范围，仍将指令限制到 -1～1。
+    return std::fmax(-1.0f, std::fmin(value, 1.0f));
+}
+
+void Chassis_Update(float target_rpm[4])
+{
+    if (target_rpm == nullptr)
+    {
+        return;
+    }
+
+    // 每次先使用零指令；未收到有效遥控数据、超时或不在运行档时，覆盖旧目标停车。
+    float vx = 0.0f;  // 向前速度，m/s
+    float vy = 0.0f;  // 向左速度，m/s
+    float wz = 0.0f;  // 逆时针角速度，rad/s
+
+    Struct_DT7_Data remote = {};
+
+    // 快照接口已包含 100ms 超时检查；左拨杆上档时允许控制底盘。
+    if (DT7_Get_Snapshot(&remote) &&
+        remote.Switch_Left == DT7_SWITCH_UP)
+    {
+        // 右摇杆前后：按前推为正映射到前后速度。
+        vx = Chassis_Normalize_Channel(remote.Channel[1])
+             * CHASSIS_MAX_VX_MPS;
+
+        // 右摇杆左右：按右推为正处理，底盘向左为正，因此取负。
+        vy = -Chassis_Normalize_Channel(remote.Channel[0])
+             * CHASSIS_MAX_VY_MPS;
+
+        // 左摇杆左右：按右推为正处理，底盘逆时针为正，因此取负。
+        wz = -Chassis_Normalize_Channel(remote.Channel[2])
+             * CHASSIS_MAX_WZ_RADPS;
+    }
+
+    // 接收四轮解算结果：左前、右前、左后、右后。
+    float wheel_rpm[4] = {0.0f};
+    Chassis_Mecanum_Inverse(vx, vy, wz, wheel_rpm);
+
+    // 按电机 ID 存入目标数组，同时修正实际安装方向。
+    // ID 从 1 开始，数组下标从 0 开始，所以需要减 1。
+    target_rpm[CHASSIS_FL_ID - 1U] = wheel_rpm[0] * CHASSIS_FL_DIRECTION;
+
+    target_rpm[CHASSIS_FR_ID - 1U] = wheel_rpm[1] * CHASSIS_FR_DIRECTION;
+
+    target_rpm[CHASSIS_RL_ID - 1U] = wheel_rpm[2] * CHASSIS_RL_DIRECTION;
+
+    target_rpm[CHASSIS_RR_ID - 1U] = wheel_rpm[3] * CHASSIS_RR_DIRECTION;
 }

@@ -54,8 +54,8 @@ void Attitude_Calibration_Service(void);
 typedef struct
 {
     float q[4];          /**< 四元数 [w, x, y, z] */
-    float Gyro[3];       /**< 机体系角速度 rad/s（未扣零偏的原始值） */
-    float Accel[3];      /**< 机体系加速度 m/s^2 */
+    float Gyro[3];       /**< 安装机体系角速度 rad/s（未扣零偏；正常摆放时与传感器轴一致） */
+    float Accel[3];      /**< 安装机体系加速度 m/s^2（正常摆放时与传感器轴一致） */
 
     float Roll;          /**< 横滚角，单位【度】 */
     float Pitch;         /**< 俯仰角，单位【度】 */
@@ -70,12 +70,10 @@ typedef struct
     uint8_t  Valid;          /**< 1 = 已产出且样本未过期；未初始化 / 断流超时为 0 */
 } Struct_Attitude;
 
-extern Struct_Attitude Attitude;
-
 /**
  * @brief 整帧复制最近一帧姿态（★ 跨任务读姿态统一走这里）
  *
- * @note  BMI088_Task 在短临界区内整帧发布 Attitude；读者也必须整帧取用，
+ * @note  BMI088_Task 在短临界区内整帧发布内部姿态对象；读者也必须整帧取用，
  *        避免逐个读字段时被发布任务抢占，混合不同帧的数据。
  *        本函数在关中断窗口内把整帧一次拷走（同时也挡住任务切换），
  *        保证 Out 里所有字段来自同一帧。
@@ -98,8 +96,8 @@ bool Attitude_Get_Snapshot(Struct_Attitude *Out);
  *           Flash 里有有效标定（按键触发的板载标定写入）→ 直接加载，
  *           【无需静止等待】；
  *           没有时退回 1 秒开机静止标定 —— 仅那一次需要静止放好。
- * @return 无返回值；初始化失败时姿态不会更新
- *         （串口只发波形、没有日志，表现就是波形上的角度一直 0 不动）
+ * @return 无返回值；初始化失败时姿态无效，USB 输出任务不发送姿态波形。
+ *         可通过调试器检查 BSP_BMI088.Is_Initialized()。
  */
 void Attitude_Init(void);
 

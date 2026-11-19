@@ -35,8 +35,12 @@
 /* Exported types ------------------------------------------------------------*/
 
 /**
- * 一次收发完成后的回调
+ * 一次 DMA 收发成功后的回调；纯发送完成和传输出错不会调用此回调。
  * @note  Tx/Rx 指针指向本层内部缓冲区，回调返回后即可能被下一笔覆盖（要留存自己拷贝）。
+ *        Rx_Buffer 含发送前缀期间收到的字节：数据起点为 Rx_Buffer + Tx_Length，
+ *        数据长度为 Rx_Length，总缓冲有效长度为 Tx_Length + Rx_Length。
+ *        DMA 中断上下文中只解析、置标志或通知任务，不阻塞或格式化输出。
+ *        事务在回调返回后才释放；需要续传时通知服务任务，勿在回调中直接起传输。
  *        CS_Port / CS_Pin 是【这一笔传输】的片选（值拷贝）—— 收方靠它认"数据是谁的"，
  *        不必再读管理对象里"最后一次传输的片选"字段，因此分发与
  *        "对象字段何时清空"彻底解耦。
@@ -125,6 +129,7 @@ void SPI_Init(SPI_HandleTypeDef *hspi, SPI_Callback Callback_Function);
 
 /**
  * @brief 只发不收（写寄存器用）
+ * @note  异步发送；完成时释放片选和事务，不调用 SPI_Callback。
  * @return HAL_OK / HAL_BUSY（上一次还没发完）/ HAL_ERROR
  */
 uint8_t SPI_Transmit_Data(SPI_HandleTypeDef *hspi, GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin,
@@ -132,8 +137,10 @@ uint8_t SPI_Transmit_Data(SPI_HandleTypeDef *hspi, GPIO_TypeDef *GPIOx, uint16_t
 
 /**
  * @brief 全双工收发（读寄存器用）
- * @note  实际长度 = Tx_Length + Rx_Length：Tx 部分不够的位置补 0。
- *        BMI088 读寄存器就是"1 字节地址 + 1 字节空数据"这个形状。
+ * @note  异步收发；Tx_Length 为地址及器件要求的 dummy 前缀长度，
+ *        Rx_Length 为其后待读取的数据长度；总传输长度为两者之和，发送后半段补零。
+ *        回调保留完整接收布局，有效数据从 Rx_Buffer + Tx_Length 开始。
+ *        例如 BMI088 加速度读取：Tx_Length=2（地址+dummy），Rx_Length=6。
  */
 uint8_t SPI_Transmit_Receive_Data(SPI_HandleTypeDef *hspi, GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin,
                                   GPIO_PinState Activate_Level, const uint8_t *Tx_Data,

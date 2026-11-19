@@ -79,6 +79,9 @@ public:
      */
     void Heater_Control();
 
+    /** 立即停热并清 PID；调用方须保证不会与 Heater_Control 并发。 */
+    void Stop_Heater();
+
     /** 恒温是否已使能（Init 里决定） */
     inline bool Get_Heater_Enable() const;
 

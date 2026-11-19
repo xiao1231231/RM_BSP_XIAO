@@ -64,7 +64,8 @@ void USB_Printf(const char *Fmt, ...);
 void USB_Post_Printf(const char *Fmt, ...);
 
 // 仅由 USB 输出任务调用
-// true：取走了一条文本并尝试发送；false：没有待发文本
+// true：有待发文本（忙时保留重试）；false：没有待发文本。
+// 仍只保存最新一条，连续提交可覆盖旧回执。
 bool USB_Send_Pending(void);
 
 #ifdef __cplusplus

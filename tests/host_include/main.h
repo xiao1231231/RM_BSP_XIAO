@@ -5,6 +5,7 @@
 
 /* 主机自检仅替换 CMSIS/HAL 边界，不模拟真实中断时序。 */
 struct CAN_HandleTypeDef { void *Instance; };
+struct UART_HandleTypeDef { void *Instance; };
 struct Host_DWT { uint32_t CYCCNT; };
 extern Host_DWT host_dwt;
 #define DWT (&host_dwt)

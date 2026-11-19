@@ -11,7 +11,7 @@
  *            反馈 0x204+编号，控制 0x1FE（1~4号）与 0x2FE（5~7号）
  *            电流指令 ±16384 ↔ ±3A；反馈转速即输出轴 rpm，减速比为 1
  *            固件 >= 1.0.11.2，并用 RoboMaster Assistant >= 2.7 开启电流环
- *          当前 CAN1 固定使用 3508 的 1~4 号和 GM6020 的 1、2 号。
+ *          本板电机型号、编号及总线配置以 system_init.cpp 的创建调用为准。
  *
  *          反馈可用性契约：CAN 反馈由中断逐帧提交【整帧快照】（含接收时刻、
  *          序号、是否收到过）；速度环每拍检查新鲜度 —— 没收到过反馈或超过
@@ -37,8 +37,8 @@
 
 /**
  * @brief 电机硬件编号；对象由【型号 + 编号】共同标识
- * @note  本工程创建 3508 的 1~4 号、GM6020 的 1、2 号。
- *        C620 编号由电调设置，GM6020 编号由拨码开关设置。
+ * @note  C620 编号由电调设置，GM6020 编号由拨码开关设置。
+ *        软件使用的编号见 system_init.cpp，须与硬件设置一致。
  */
 enum Enum_DJI_Motor_Num : uint32_t
 {
@@ -56,6 +56,13 @@ enum Enum_DJI_Motor_Type : uint8_t
 {
     DJI_MOTOR_TYPE_M3508 = 0,
     DJI_MOTOR_TYPE_GM6020 = 1,
+};
+
+// 选择主控程序怎样计算电流指令
+enum Enum_DJI_Motor_Control_Mode : uint8_t
+{
+    DJI_MOTOR_CONTROL_SPEED = 0,    // 根据目标转速，用速度 PID 算电流
+    DJI_MOTOR_CONTROL_CURRENT = 1,  // 电流由外部算法提供，例如 SMC
 };
 
 struct Struct_DJI_Motor_Measure
@@ -89,10 +96,35 @@ public:
               float K_P, float K_I, float K_D,
               Enum_DJI_Motor_Type Motor_Type = DJI_MOTOR_TYPE_M3508);
 
-    /* 目标由 Motor_Task 设置；零目标仍运行速度环，将转速控制到零。 */
-    inline void Set_Target_Speed_Rpm(const float &rpm) { Target_Speed_Rpm = rpm; }
+    // 设置目标转速，并选择速度 PID 控制
+    inline void Set_Target_Speed_Rpm(const float &rpm)
+    {
+        // 从电流控制切回速度控制时，清掉 PID 之前的计算记录
+        if (Control_Mode != DJI_MOTOR_CONTROL_SPEED)
+        {
+            Speed_PID.Reset();
+        }
 
-    /** 跑一次速度环（1kHz，由 DJI_Motor_Control_Task 逐个调用） */
+        Control_Mode = DJI_MOTOR_CONTROL_SPEED;
+        Target_Speed_Rpm = rpm;
+        Target_Current = 0.0f;  // 清掉另一种模式的旧目标
+    }
+
+    // 设置目标电流指令，并选择直接电流控制
+    inline void Set_Target_Current(float current)
+    {
+        // 切换到电流控制时，清掉速度 PID 的计算记录
+        if (Control_Mode != DJI_MOTOR_CONTROL_CURRENT)
+        {
+            Speed_PID.Reset();
+        }
+
+        Control_Mode = DJI_MOTOR_CONTROL_CURRENT;
+        Target_Current = current;
+        Target_Speed_Rpm = 0.0f;  // 清掉另一种模式的旧目标
+    }
+
+    /** 按控制模式生成本拍电流指令（1kHz，由 DJI_Motor_Control_Task 逐个调用） */
     void Control();
 
     /** 解析本电机的反馈帧；拒绝空指针、非 8 字节和超范围编码器值 */
@@ -102,6 +134,8 @@ public:
     bool Get_Feedback_Snapshot(Struct_DJI_Motor_Feedback &__Out) const;
 
     inline float Get_Target_Speed_Rpm() const { return Target_Speed_Rpm; }
+    // 读取外部算法设置的目标电流指令
+    inline float Get_Target_Current() const { return Target_Current; }
     /** 返回原始 CAN 电流指令；±16384 对应 C620 ±20A、GM6020 ±3A */
     inline int16_t Get_Out_Current() const { return Out_Current; }
     inline uint8_t Get_Motor_Id() const { return Motor_Id; }
@@ -116,7 +150,17 @@ protected:
     Struct_DJI_Motor_Feedback Feedback = {};
     uint16_t Last_Ecd = 0U;         /* 上一帧编码器值（算多圈增量） */
     Class_PID Speed_PID;
+
+    // 默认使用原来的速度 PID 控制
+    Enum_DJI_Motor_Control_Mode Control_Mode = DJI_MOTOR_CONTROL_SPEED;
+
+    // 速度控制时使用，单位：rpm
     float Target_Speed_Rpm = 0.0f;
+
+    // 直接电流控制时使用，是 CAN 电流指令数值，单位不是 A
+    float Target_Current = 0.0f;
+
+    // 最终准备通过 CAN 发给电机的电流指令
     int16_t Out_Current = 0;
 };
 
@@ -133,10 +177,11 @@ Class_DJI_Motor *DJI_Motor_Create(Enum_DJI_Motor_Num Motor_Num,
 Class_DJI_Motor *DJI_Motor_Get(Enum_DJI_Motor_Num Motor_Num,
                               Enum_DJI_Motor_Type Motor_Type = DJI_MOTOR_TYPE_M3508);
 
-/** 1kHz 调用：统一跑速度环；3508 按 0x200/0x1FF、GM6020 按 0x1FE/0x2FE 拼帧 */
-void DJI_Motor_Control_Task();
+/** 1kHz 调用：统一计算电流并发送；3508 按 0x200/0x1FF、GM6020 按 0x1FE/0x2FE 拼帧 */
+// Stop=true：清目标、切到零电流并发送；返回所有组是否均提交成功。
+bool DJI_Motor_Control_Task(bool Stop = false);
 
-/** 是否有任一电机的目标转速非零（IMU 零偏标定前的活动检查） */
-bool DJI_Motor_Any_Target_Active(void);
+/** 是否有任一电机的目标或实际控制输出非零；仅由控制任务读取。 */
+bool DJI_Motor_Any_Control_Active(void);
 
 #endif /* DJI_MOTOR_H */

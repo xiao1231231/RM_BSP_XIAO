@@ -67,12 +67,18 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Task/USB_Output_Task.cpp
         # ── DJI 电机（3508/C620、GM6020 电流模式）──
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Motor/DJImotor/dji_motor.cpp
+        # DM4310 电机（MIT 模式）
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Motor/DMotor/dm4310.cpp
 
         # DT7 遥控器
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Device/Peripheral/Remote/DT7/dt7.cpp
 
         # 底盘应用
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Application/Chassis/chassis.cpp
+
+        # 云台应用
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Application/Gimbal/gimbal.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Application/Gimbal/gimbal_remote.cpp
 
         # ── BMI088 驱动（移植自 H7_BSP / USTC-RoboWalker）──
         # 结构：Gyro（FIFO 读取 + 时间戳重建 + 样本队列）
@@ -104,6 +110,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         # 参数照 basic_framework（C 板官方）按本工程 ARR 等比换算。
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/PID/alg_filter_iir.cpp
         ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/PID/alg_pid.cpp
+
+        # 独立 SMC 算法（幂次滑模面 + 近零线性段 + 边界层）
+        ${CMAKE_CURRENT_LIST_DIR}/User_File/Middleware/Algorithm/SMC/alg_smc.cpp
 )
 
 
@@ -111,6 +120,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
         User_File/System/Init
+        User_File/Task
         User_File/System/Timestamp
         User_File/System/debug
         User_File/System/callback
@@ -123,8 +133,10 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         User_File/Middleware/BSP/USB
         User_File/Middleware/BSP/FLASH
         User_File/Device/Peripheral/Motor/DJImotor
+        User_File/Device/Peripheral/Motor/DMotor
         User_File/Device/Peripheral/Remote/DT7
         User_File/Application/Chassis
+        User_File/Application/Gimbal
 
         # ── BMI088 + 姿态解算 ──
         User_File/Device/Onboard/BMI088
@@ -133,6 +145,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         User_File/Middleware/Algorithm/Matrix
         User_File/Middleware/Algorithm/VQF
         User_File/Middleware/Algorithm/PID
+        User_File/Middleware/Algorithm/SMC
         User_File/System/INS
 )
 

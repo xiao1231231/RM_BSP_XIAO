@@ -67,14 +67,17 @@ Class_DJI_Motor *DJI_Motor_Get(Enum_DJI_Motor_Num Motor_Num, Enum_DJI_Motor_Type
     return motors[static_cast<uint8_t>(Motor_Type)][static_cast<uint8_t>(Motor_Num) - 1];
 }
 
-bool DJI_Motor_Any_Target_Active(void)
+bool DJI_Motor_Any_Control_Active(void)
 {
     for (uint8_t type = 0U; type < MOTOR_TYPE_COUNT; type++)
     {
         for (uint8_t i = 0U; i < DJI_MOTOR_CNT; i++)
         {
             const Class_DJI_Motor *motor = motors[type][i];
-            if (motor != nullptr && motor->Get_Target_Speed_Rpm() != 0.0f)
+            if (motor != nullptr &&
+                (motor->Get_Target_Speed_Rpm() != 0.0f ||
+                 motor->Get_Target_Current() != 0.0f ||
+                 motor->Get_Out_Current() != 0))
             {
                 return true;
             }
@@ -92,7 +95,10 @@ void Class_DJI_Motor::Init(CAN_HandleTypeDef *hcan, uint8_t Motor_Id,
     Gear_Ratio = (Motor_Type == DJI_MOTOR_TYPE_GM6020) ? 1.0f : DJI_GEAR_RATIO;
     Feedback = {};
     Last_Ecd = 0U;
+    // 初始化时选择速度模式，并清零所有目标和输出
+    Control_Mode = DJI_MOTOR_CONTROL_SPEED;
     Target_Speed_Rpm = 0.0f;
+    Target_Current = 0.0f;
     Out_Current = 0;
 
     /* 速度环 1kHz：输出原始电流指令，两个型号均限幅 ±16384。 */
@@ -102,34 +108,65 @@ void Class_DJI_Motor::Init(CAN_HandleTypeDef *hcan, uint8_t Motor_Id,
 
 void Class_DJI_Motor::Control()
 {
-    /* ── 反馈可用性检查：拿不到新鲜反馈就不闭环 ──
-     * 两种坏状态在这里统一拦截：
-     *   · 从没收到反馈（电调没上电 / ID 不对 / 线没接）→ 测量值全零
-     *   · 反馈停了（掉线 / 接触不良）→ 旧值冻结在最后一帧
-     * 两者都输出零电流（电机不带力，现象肉眼可见），同时清 PID 历史 ——
-     * 恢复后从零起步，不带陈旧积分。整车级联动停机是应用层的事。
-     * ★ 没有这段的话：速度环会拿冻结的转速当真，电流一路顶到限幅。 */
+    // 1. 读取一帧完整的电机反馈
     Struct_DJI_Motor_Feedback feedback;
     const bool received = Get_Feedback_Snapshot(feedback);
+
+    // 没收到反馈，或者反馈超过 5ms 没更新，就输出零电流
     if (!received ||
-        (Sys_Get_Micros() - feedback.Last_Rx_Time_Us) > DJI_FEEDBACK_TIMEOUT_US ||
-        Basic_Math_Is_Invalid_Float(Target_Speed_Rpm))
+        (Sys_Get_Micros() - feedback.Last_Rx_Time_Us) > DJI_FEEDBACK_TIMEOUT_US)
     {
         Out_Current = 0;
-        Speed_PID.Reset();      /* 每拍清，幂等；恢复瞬间无历史负担 */
+        Speed_PID.Reset();
         return;
     }
 
-    Speed_PID.Set_Target(Target_Speed_Rpm);
-    Speed_PID.Set_Now(feedback.Measure.Speed_Rpm);
-    Speed_PID.TIM_Calculate_PeriodElapsedCallback();
-    const float current = Speed_PID.Get_Out();
+    // 暂存本次准备输出的电流指令
+    float current = 0.0f;
+
+    // 2. 根据控制模式，决定电流从哪里来
+    if (Control_Mode == DJI_MOTOR_CONTROL_SPEED)
+    {
+        // 目标转速出现异常数值时，停止输出
+        if (Basic_Math_Is_Invalid_Float(Target_Speed_Rpm))
+        {
+            Out_Current = 0;
+            Speed_PID.Reset();
+            return;
+        }
+
+        // 速度模式：使用原来的速度 PID 计算电流
+        Speed_PID.Set_Target(Target_Speed_Rpm);
+        Speed_PID.Set_Now(feedback.Measure.Speed_Rpm);
+        Speed_PID.TIM_Calculate_PeriodElapsedCallback();
+
+        current = Speed_PID.Get_Out();
+    }
+    else if (Control_Mode == DJI_MOTOR_CONTROL_CURRENT)
+    {
+        // 电流模式：直接使用外部算法提供的电流指令
+        current = Target_Current;
+    }
+    else
+    {
+        // 模式数值不合法时，停止输出
+        Out_Current = 0;
+        Speed_PID.Reset();
+        return;
+    }
+
+    // 3. 无论电流由谁提供，都要检查是否出现异常数值
     if (Basic_Math_Is_Invalid_Float(current))
     {
         Out_Current = 0;
         Speed_PID.Reset();
         return;
     }
+
+    // 4. 将电流指令限制在协议允许的范围内：-16384～16384
+    current = Basic_Math_Constrain(current, -DJI_OUT_CURRENT_MAX, DJI_OUT_CURRENT_MAX);
+
+    // 5. 转换成 CAN 报文需要的有符号整数，等待统一发送
     Out_Current = static_cast<int16_t>(current);
 }
 
@@ -182,9 +219,10 @@ bool Class_DJI_Motor::Get_Feedback_Snapshot(Struct_DJI_Motor_Feedback &__Out) co
     return received;
 }
 
-void DJI_Motor_Control_Task()
+bool DJI_Motor_Control_Task(bool Stop)
 {
-    if (motor_can_handle == nullptr) { return; }
+    if (motor_can_handle == nullptr) { return false; }
+    bool all_sent = true;
 
     /* 型号决定控制帧 ID；GM6020 只发送电流控制报文。 */
     static constexpr uint32_t tx_ids[MOTOR_TYPE_COUNT][2] = {
@@ -195,7 +233,11 @@ void DJI_Motor_Control_Task()
     {
         for (uint8_t i = 0; i < DJI_MOTOR_CNT; i++)
         {
-            if (motors[type][i] != nullptr) { motors[type][i]->Control(); }
+            if (motors[type][i] != nullptr)
+            {
+                if (Stop) { motors[type][i]->Set_Target_Current(0.0f); }
+                motors[type][i]->Control();
+            }
         }
 
         /* 每四个硬件 ID 为一组；未创建的槽位补零，整组无对象则不发送。
@@ -215,8 +257,12 @@ void DJI_Motor_Control_Task()
             }
             if (group_has_motor)
             {
-                CAN_Transmit(motor_can_handle, tx_ids[type][group], frame, 8);
+                if (!CAN_Transmit(motor_can_handle, tx_ids[type][group], frame, 8))
+                {
+                    all_sent = false;
+                }
             }
         }
     }
+    return all_sent;
 }

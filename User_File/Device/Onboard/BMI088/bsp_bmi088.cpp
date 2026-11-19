@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 
 #include "bsp_bmi088.h"
+#include "bsp_bmi088_mounting.h"
 
 #include "alg_basic.h"
 #include <math.h>
@@ -259,7 +260,7 @@ void Class_BMI088::Set_VQF_Bias_Estimate(const Class_Matrix_f32<3, 1> &__Bias)
     {
         return;
     }
-    Filter_VQF.Set_Bias_Estimate(__Bias);
+    Filter_VQF.Set_Bias_Estimate(BMI088_Mounting::Sensor_To_Body(__Bias));
 }
 
 void Class_BMI088::Request_VQF_Bias_Estimate(const Class_Matrix_f32<3, 1> &__Bias)
@@ -793,20 +794,14 @@ void Class_BMI088::Calculate()
         return;
     }
 
-    /* 在短临界区取走完整请求；滤波器只读局部副本，后续请求留给下一帧。 */
-    Class_Matrix_f32<3, 1> requested_bias;
-    const uint32_t bias_primask = __get_PRIMASK();
-    __disable_irq();
-    const bool apply_bias = VQF_Bias_Request_Pending;
-    if (apply_bias)
+    // 被陀螺驱动拒绝的样本不能推进滤波器，也不能刷新有效姿态的时刻。
+    if (gyro_sample.Valid == 0U)
     {
-        requested_bias = VQF_Bias_Requested;
-        VQF_Bias_Request_Pending = false;
-    }
-    __set_PRIMASK(bias_primask);
-    if (apply_bias)
-    {
-        Filter_VQF.Set_Bias_Estimate(requested_bias);
+        Struct_BMI088_Attitude_Frame frame = {};
+        (void)Get_Attitude_Frame(frame);
+        frame.Valid = false;
+        Publish_Attitude_Frame(frame);
+        return;
     }
 
     /* 加速度每 4ms 才更新一次，所以这里有"待用观测"的暂存：
@@ -848,8 +843,6 @@ void Class_BMI088::Calculate()
     Vector_Original_Gyro[2][0] = gyro_sample.Gyro_Rad_S[2];
     Vector_Fixed_Corrected_Gyro = Vector_Original_Gyro;
 
-    const bool gyro_valid = gyro_sample.Valid != 0U;
-
     /* ── 板级标定 ──
      * 原版把这段放在 `if (Heater_Enable)` 里（他们板子上加热常开）。
      * 本工程标定常量按本板留空（单位矩阵 / 零），无条件执行即可 ——
@@ -860,11 +853,11 @@ void Class_BMI088::Calculate()
              Vector_Original_Accel / GRAVITY_ACCELERATION +
          Class_Matrix_f32<3, 1>(ACCEL_BIAS_DATA)) *
         GRAVITY_ACCELERATION;
-    if (gyro_valid)
-    {
-        Vector_Fixed_Corrected_Gyro +=
-            Class_Matrix_f32<3, 1>(GYRO_ZERO_OFFSET);
-    }
+    Vector_Original_Accel =
+        BMI088_Mounting::Sensor_To_Body(Vector_Original_Accel);
+    Vector_Fixed_Corrected_Gyro = BMI088_Mounting::Sensor_To_Body(
+        Vector_Fixed_Corrected_Gyro +
+        Class_Matrix_f32<3, 1>(GYRO_ZERO_OFFSET));
     Accel_Norm = Vector_Original_Accel.Get_Modulus();
 
     if (VQF_Pre_Timestamp == 0U)
@@ -885,18 +878,36 @@ void Class_BMI088::Calculate()
         VQF_Pre_Timestamp = gyro_sample.Timestamp_Us;
         if (D_T > D_T_TIMEOUT_THRESHOLD)
         {
-            // 中间断了（>0.1s）：重置滤波器，别拿一段大空白去硬积分
+            // 断流只重置姿态和滤波历史，保留当前零偏作为恢复初值。
             Sensor_Ready_Gap_Counter++;
+            const auto bias = Filter_VQF.Get_Bias_Estimate();
             Filter_VQF.Reset();
+            Filter_VQF.Set_Bias_Estimate(bias);
             VQF_Reset_Counter++;
             D_T = VQF_Config.Gyro_D_T;
         }
     }
 
-    if (gyro_valid)
+    // 在线标定请求在断流重置之后应用，避免新零偏同一拍被清掉。
+    // 时间戳异常的样本也不会取走请求。
+    Class_Matrix_f32<3, 1> requested_bias;
+    const uint32_t bias_primask = __get_PRIMASK();
+    __disable_irq();
+    const bool apply_bias = VQF_Bias_Request_Pending;
+    if (apply_bias)
     {
-        Filter_VQF.Update_Gyro(Vector_Fixed_Corrected_Gyro);
+        requested_bias = VQF_Bias_Requested;
+        VQF_Bias_Request_Pending = false;
     }
+    __DMB();
+    __set_PRIMASK(bias_primask);
+    if (apply_bias)
+    {
+        Filter_VQF.Set_Bias_Estimate(
+            BMI088_Mounting::Sensor_To_Body(requested_bias));
+    }
+
+    Filter_VQF.Update_Gyro(Vector_Fixed_Corrected_Gyro);
 
     if (Accel_Observation_Pending &&
         Pending_Accel_Timestamp <= gyro_sample.Timestamp_Us)
@@ -939,7 +950,7 @@ void Class_BMI088::Calculate()
     frame.Quaternion     = Quarternion;
     frame.Euler_Angle    = Vector_Euler_Angle;
     frame.Gyro_Bias      = Filter_VQF.Get_Bias_Estimate();
-    frame.Gyro           = Vector_Original_Gyro;
+    frame.Gyro           = BMI088_Mounting::Sensor_To_Body(Vector_Original_Gyro);
     frame.Accel          = Vector_Original_Accel;
     frame.Sample_Time_Us = gyro_sample.Timestamp_Us;
     frame.Rest_Detected  = Filter_VQF.Get_Rest_Detected() ? 1U : 0U;

@@ -71,12 +71,18 @@ bool Class_BMI088_Gyro::Pop_Sample(Struct_BMI088_Gyro_Sample &__Sample)
     return true;
 }
 
+void Class_BMI088_Gyro::Discard_Samples()
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    Sample_Queue_Tail = Sample_Queue_Head;
+    __DMB();
+    __set_PRIMASK(primask);
+}
+
 /**
  * @brief 初始化陀螺仪
- *
- * @note  每一步最多重试 5 次，任何一步失败都返回 false ——
- *        ★ 上层必须检查返回值：初始化失败还继续跑，"姿态不动"会变成
- *          一个没有任何提示的哑故障（旧驱动就是只打日志不检查）。
+ * @note 每一步最多重试 5 次，失败返回 false，由上层禁止后续解算。
  */
 bool Class_BMI088_Gyro::Init()
 {

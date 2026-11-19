@@ -8,7 +8,7 @@
  *
  *          当前参数都写在各自的配置处，不在本文件：恒温这路在
  *          bsp_bmi088_accel.h 的 HEATER_*（来自 basic_framework，按 ARR 等比换算）；
- *          电机速度环在 system_init.cpp 的 DJI_Motor_Create(...) 实参里。
+ *          电机速度环在 system_init.cpp 的 DJI_Motor_Create / DM4310_Motor_Create 实参里。
  */
 
 #ifndef ALG_PID_H

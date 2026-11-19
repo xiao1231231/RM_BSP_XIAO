@@ -17,7 +17,7 @@
 #include "bsp_flash.h"      /* 零偏标定的 Flash 存储 */
 #include "sys_debug.h"      /* USB_Post_Printf —— 提交标定回执 */
 #include "sys_timestamp.h"  /* 样本新鲜度使用单调微秒时间 */
-#include "dji_motor.h"      /* DJI_Motor_Any_Target_Active —— 标定前检查电机空闲 */
+#include "Motor_Task.h"     /* 控制任务发布空闲状态并确认保存前停机 */
 #include "callback.h"       /* SPI1_Callback */
 #include "spi.h"            /* hspi1 —— BMI088 挂在这条 SPI 上 */
 
@@ -26,7 +26,7 @@
 
 #define RAD_2_DEG   57.29577951f
 
-Struct_Attitude Attitude;
+static Struct_Attitude Attitude;
 
 static bool Attitude_Sample_Is_Fresh(uint64_t sample_time_us)
 {
@@ -43,11 +43,12 @@ static bool Attitude_Sample_Is_Fresh(uint64_t sample_time_us)
  *     IDLE ──启动前拒绝检查（IMU 就绪？电机没在转？）──
  *         → SETTLE：启动后静置 2 秒
  *         → SAMPLING：收集 30000 个新样本（正常调度约 30s）
- *         → SAVING：静止体检通过后同步保存 Flash
+ *         → WAIT_STOP：控制任务确认零电流/失能帧已发送
+ *         → SAVING：同步保存 Flash，期间暂停控制和加热
  *         → IDLE：提交 USB 结果回执；失败或中止也直接回到 IDLE
  *
  * 三道质量闸门（都是为了让写进 Flash 的数真的代表零偏）：
- *   ① 启动前：IMU 未就绪拒绝；有电机目标非零拒绝（板子不安静）
+ *   ① 启动前：IMU 未就绪拒绝；有电机目标、输出或使能状态时拒绝
  *   ② 采样中：电机被启动 → 立即中止
  *   ③ 写入前：三轴标准差超限（板子被碰过）→ 拒绝写入
  *
@@ -65,6 +66,7 @@ enum Enum_Calibration_State
     CAL_IDLE = 0,       /* 无标定进行 */
     CAL_SETTLE,         /* 启动后的静置缓冲 */
     CAL_SAMPLING,       /* 静止采样中 */
+    CAL_WAIT_STOP,      /* 等待控制任务确认停机 */
     CAL_SAVING,         /* 同步保存 Flash */
 };
 static Enum_Calibration_State s_Cal_State = CAL_IDLE;
@@ -74,11 +76,12 @@ enum Enum_Calibration_Fail
 {
     CAL_FAIL_NONE = 0U,
     CAL_FAIL_IMU_NOT_READY,     /* IMU 没初始化完 */
-    CAL_FAIL_MOTOR_ACTIVE,      /* 有电机目标非零：板子不安静 */
+    CAL_FAIL_MOTOR_ACTIVE,      /* 有电机目标、输出或使能状态 */
     CAL_FAIL_MOTION,            /* 静止体检不过：采样期间被碰了 */
     CAL_FAIL_SAMPLE_TIMEOUT,    /* 采样超时：姿态帧不再更新（IMU 断流） */
     CAL_FAIL_FLASH,             /* 写 Flash 或读回校验失败 */
     CAL_FAIL_SAMPLE_STALE,      /* 姿态无效或样本过期 */
+    CAL_FAIL_STOP_TIMEOUT,      /* 停机帧未确认，禁止擦写 */
 };
 static uint8_t s_Cal_Fail_Reason = CAL_FAIL_NONE;
 
@@ -98,6 +101,7 @@ static constexpr uint32_t CAL_SETTLE_MS = 2000U;       /* 启动后的静置缓�
 static constexpr uint32_t CAL_TOTAL_SAMPLES = 30000U;  /* 每轮最多接收一帧，正常调度约 30s */
 static constexpr uint32_t CAL_SAMPLE_TIMEOUT_MS = 45000U; /* 采样硬超时（30s + 余量） */
 static constexpr float    CAL_MAX_STD_RAD_S = 0.05f;   /* 静止体检阈值（≈2.9°/s） */
+static constexpr uint32_t CAL_STOP_TIMEOUT_MS = 100U;
 
 void Attitude_Calibration_Request(void)
 {
@@ -146,6 +150,7 @@ static void Calibration_Fail(uint8_t reason, const char *receipt)
 {
     s_Cal_Fail_Reason = reason;
     USB_Post_Printf("%s", receipt);
+    Motor_Maintenance_Release();
     s_Cal_State = CAL_IDLE;
 }
 
@@ -174,7 +179,7 @@ void Attitude_Calibration_Service(void)
             USB_Post_Printf("cal:reject,imu_not_ready");
             return;
         }
-        if (DJI_Motor_Any_Target_Active())
+        if (!Motor_Control_Is_Idle())
         {
             s_Cal_Fail_Reason = CAL_FAIL_MOTOR_ACTIVE;
             USB_Post_Printf("cal:reject,motor_active");
@@ -213,7 +218,7 @@ void Attitude_Calibration_Service(void)
     case CAL_SAMPLING:
     {
         /* 采样中途电机被启动 → 立刻中止（板子不安静，数据不可信） */
-        if (DJI_Motor_Any_Target_Active())
+        if (!Motor_Control_Is_Idle())
         {
             Calibration_Fail(CAL_FAIL_MOTOR_ACTIVE, "cal:abort,motor_active");
             break;
@@ -239,7 +244,14 @@ void Attitude_Calibration_Service(void)
         if (sample.Sequence != s_Cal_Last_Sequence)
         {
             s_Cal_Last_Sequence = sample.Sequence;
-            Calibration_Welford_Update(sample.Gyro);
+            const float gyro_body_values[3] = {
+                sample.Gyro[0], sample.Gyro[1], sample.Gyro[2]};
+            const Class_Matrix_f32<3, 1> gyro_sensor =
+                BMI088_Mounting::Body_To_Sensor(
+                    Class_Matrix_f32<3, 1>(gyro_body_values));
+            const float gyro_sensor_values[3] = {
+                gyro_sensor[0][0], gyro_sensor[1][0], gyro_sensor[2][0]};
+            Calibration_Welford_Update(gyro_sensor_values);
         }
 
         if (s_Cal_Count >= CAL_TOTAL_SAMPLES)
@@ -250,33 +262,59 @@ void Attitude_Calibration_Service(void)
                 Calibration_Fail(CAL_FAIL_MOTION, "cal:abort,motion");
                 break;
             }
+            Motor_Maintenance_Request();
+            s_Cal_Tick_Start = osKernelGetTickCount();
+            s_Cal_State = CAL_WAIT_STOP;
+        }
+        break;
+    }
+
+    case CAL_WAIT_STOP:
+    {
+        if (Motor_Maintenance_Is_Ready())
+        {
             s_Cal_State = CAL_SAVING;
+        }
+        else if (osKernelGetTickCount() - s_Cal_Tick_Start >= CAL_STOP_TIMEOUT_MS)
+        {
+            Calibration_Fail(CAL_FAIL_STOP_TIMEOUT, "cal:abort,stop_timeout");
         }
         break;
     }
 
     case CAL_SAVING:
     {
-        /* 采样结束到本拍之间可能断流或启动电机，擦除前再检查一次。 */
+        /* 控制任务已经停止输出；擦除前再检查姿态与停机确认。 */
         Struct_Attitude sample;
         if (!Attitude_Get_Snapshot(&sample))
         {
             Calibration_Fail(CAL_FAIL_SAMPLE_STALE, "cal:abort,sample_stale");
             break;
         }
-        if (DJI_Motor_Any_Target_Active())
+        if (!Motor_Maintenance_Is_Ready())
         {
             Calibration_Fail(CAL_FAIL_MOTOR_ACTIVE, "cal:abort,motor_active");
             break;
         }
         const float temperature = BSP_BMI088.Get_Temperature();
 
+        // 停机确认后禁止任务切换；中断仍开放，HAL 超时计时仍可工作。
+        const int32_t kernel_lock = osKernelLock();
+        if (kernel_lock < 0)
+        {
+            Calibration_Fail(CAL_FAIL_FLASH, "cal:abort,kernel_lock");
+            break;
+        }
+        BSP_BMI088.BMI088_Accel.Stop_Heater();
+
+        /* 采样时已转回传感器坐标系，均值直接保存，避免重复变换。 */
         /* 同步擦写 Flash 可能暂停任务执行，实际耗时需在目标板验证。 */
         if (BSP_Flash_Calibration_Save(s_Cal_Mean, temperature))
         {
             /* 通过"请求"接口喂给 VQF：由解算任务在样本边界应用 ——
              * 直接从本任务写滤波器会和 BMI088_Task 的零偏估计并发（见接口注释） */
-            BSP_BMI088.Request_VQF_Bias_Estimate(Class_Matrix_f32<3, 1>(s_Cal_Mean));
+            BSP_BMI088.Request_VQF_Bias_Estimate(
+                Class_Matrix_f32<3, 1>(s_Cal_Mean));
             Attitude_Bias_Source = 2U;
             USB_Post_Printf("cal:done,ok,t=%.1f", (double)temperature);
         }
@@ -287,6 +325,8 @@ void Attitude_Calibration_Service(void)
         }
 
         s_Cal_State = CAL_IDLE;
+        Motor_Maintenance_Release();
+        (void)osKernelRestoreLock(kernel_lock);
         break;
     }
     }
@@ -360,9 +400,8 @@ void Attitude_Init(void)
      * ══════════════════════════════════════════════════════════════════ */
     if (!BSP_BMI088.Init())
     {
-        /* 初始化失败：内部有效标志不打开，姿态不会更新。
-         * 串口上只发波形、没有日志可打 —— 现象就是波形里的角度一直是 0 不动。
-         * 真要查，用 BSP_BMI088.Is_Initialized()，或者临时加一个波形通道。 */
+        /* 初始化失败：姿态无效，USB 输出任务不发送姿态波形。
+         * 可通过调试器检查 BSP_BMI088.Is_Initialized()。 */
         return;
     }
 
@@ -416,6 +455,9 @@ void Attitude_Init(void)
             Attitude_Bias_Source = 1U;
         }
     }
+
+    // 解算任务尚未启动，短暂屏蔽生产者后清掉启动阶段的旧队列。
+    BSP_BMI088.BMI088_Gyro.Discard_Samples();
 }
 
 void Attitude_Task(void)

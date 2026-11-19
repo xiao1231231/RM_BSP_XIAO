@@ -268,11 +268,15 @@ uint8_t Class_BMI088_Accel::SPI_Request_Temperature()
                                      Activate_Pin_State, tx_data, sizeof(tx_data), 2);
 }
 
+void Class_BMI088_Accel::Stop_Heater()
+{
+    __HAL_TIM_SET_COMPARE(BMI088_HEAT_TIM, BMI088_HEAT_CHANNEL, 0U);
+    Heater_PWM_Compare = 0U;
+    PID_Temperature.Reset();
+}
+
 /**
- * @brief IMU 恒温控制（500Hz 调用，见 .h 说明）
- *
- * @note  温度数据无效/过期时立即停热 —— 温度不可信时宁可不加热，
- *        也不能让 PID 拿着旧温度一直输出大功率。
+ * @brief IMU 恒温控制（500Hz 调用）；温度无效或过期时停热。
  */
 void Class_BMI088_Accel::Heater_Control()
 {

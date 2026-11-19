@@ -23,6 +23,7 @@
 // ponytail: 只保留最新一条待发文本；需要保留连续多条时改用队列。
 static char s_USB_Pending_Line[DEBUG_LINE_MAX];
 static uint16_t s_USB_Pending_Length = 0U;
+static uint32_t s_USB_Pending_Sequence = 0U;
 
 /* Private functions ---------------------------------------------------------*/
 
@@ -105,6 +106,7 @@ void USB_Post_Printf(const char *Fmt, ...)
 
   memcpy(s_USB_Pending_Line, line, used);
   s_USB_Pending_Length = used;
+  s_USB_Pending_Sequence++;
 
   __DMB();
   __set_PRIMASK(primask);
@@ -118,11 +120,11 @@ bool USB_Send_Pending(void)
   __disable_irq();
 
   const uint16_t length = s_USB_Pending_Length;
+  const uint32_t sequence = s_USB_Pending_Sequence;
 
   if (length != 0U)
   {
     memcpy(line, s_USB_Pending_Line, length);
-    s_USB_Pending_Length = 0U;
   }
 
   __DMB();
@@ -133,7 +135,17 @@ bool USB_Send_Pending(void)
     return false;
   }
 
-  // 沿用原来的非阻塞发送、忙时丢弃规则
-  (void)USB_Transmit((const uint8_t *)line, length);
+  // 忙时保留回执，下轮重试；只清掉本次发送的版本，不覆盖新提交的文本。
+  if (USB_Transmit((const uint8_t *)line, length))
+  {
+    const uint32_t clear_primask = __get_PRIMASK();
+    __disable_irq();
+    if (s_USB_Pending_Sequence == sequence)
+    {
+      s_USB_Pending_Length = 0U;
+    }
+    __DMB();
+    __set_PRIMASK(clear_primask);
+  }
   return true;
 }

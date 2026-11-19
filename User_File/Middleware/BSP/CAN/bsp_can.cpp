@@ -25,7 +25,12 @@ static volatile uint8_t can_device_count = 0;
 volatile uint32_t can_bus_off_count = 0;
 volatile uint32_t can_last_lec = 0;
 volatile uint32_t can_tx_drop_count = 0;
-static bool can_in_bus_off = false;
+volatile uint32_t can_tx_submit_count = 0;
+volatile uint32_t can_tx_complete_count = 0;
+volatile uint32_t can_tx_arbitration_lost_count = 0;
+volatile uint32_t can_tx_error_count = 0;
+volatile uint32_t can_rx_overrun_count = 0;
+static bool can_in_bus_off[2] = {}; /* CAN1、CAN2 分别记录上一次状态 */
 
 bool CAN_Init(CAN_HandleTypeDef *hcan)
 {
@@ -41,7 +46,7 @@ bool CAN_Init(CAN_HandleTypeDef *hcan)
     filter.FilterMaskIdHigh     = 0x0000;
     filter.FilterMaskIdLow      = 0x0000;
     filter.FilterFIFOAssignment = CAN_RX_FIFO0;
-    filter.FilterBank           = 0;      /* CAN1 用 bank0（CAN2 是从机，用 14 起） */
+    filter.FilterBank           = (hcan->Instance == CAN1) ? 0U : 14U;
     filter.FilterActivation     = ENABLE;
     filter.SlaveStartFilterBank = 14;
 
@@ -58,10 +63,23 @@ bool CAN_Init(CAN_HandleTypeDef *hcan)
     {
         return false;
     }
-    if (HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
+    if (HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING |
+                                    CAN_IT_RX_FIFO0_OVERRUN |
+                                    CAN_IT_TX_MAILBOX_EMPTY) != HAL_OK)
     {
         (void)HAL_CAN_Stop(hcan);
         return false;
+    }
+    // TX 中断入口在系统回调层，避免改写 CubeMX 生成区。
+    if (hcan->Instance == CAN1)
+    {
+        HAL_NVIC_SetPriority(CAN1_TX_IRQn, 5U, 0U);
+        HAL_NVIC_EnableIRQ(CAN1_TX_IRQn);
+    }
+    else if (hcan->Instance == CAN2)
+    {
+        HAL_NVIC_SetPriority(CAN2_TX_IRQn, 5U, 0U);
+        HAL_NVIC_EnableIRQ(CAN2_TX_IRQn);
     }
     return true;
 }
@@ -128,7 +146,39 @@ bool CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Tx_ID,
      *   传 nullptr 就是往地址 0 写 —— Flash 启动映射下这个写会被悄悄丢掉，
      *   所以以前"看起来能跑"，但它是未定义行为，换启动模式就变成改内存。 */
     uint32_t mailbox = 0U;
-    return HAL_CAN_AddTxMessage(hcan, &header, buffer, &mailbox) == HAL_OK;
+    if (HAL_CAN_AddTxMessage(hcan, &header, buffer, &mailbox) != HAL_OK)
+    {
+        return false;
+    }
+    can_tx_submit_count++;
+    return true;
+}
+
+void BSP_CAN_TxCompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    (void)hcan;
+    can_tx_complete_count++;
+}
+
+void BSP_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
+{
+    const uint32_t errors = HAL_CAN_GetError(hcan);
+    static constexpr uint32_t arbitration_errors[3] = {
+        HAL_CAN_ERROR_TX_ALST0, HAL_CAN_ERROR_TX_ALST1, HAL_CAN_ERROR_TX_ALST2};
+    static constexpr uint32_t transmit_errors[3] = {
+        HAL_CAN_ERROR_TX_TERR0, HAL_CAN_ERROR_TX_TERR1, HAL_CAN_ERROR_TX_TERR2};
+    for (uint8_t i = 0U; i < 3U; ++i)
+    {
+        if ((errors & arbitration_errors[i]) != 0U) { can_tx_arbitration_lost_count++; }
+        if ((errors & transmit_errors[i]) != 0U) { can_tx_error_count++; }
+    }
+    if ((errors & HAL_CAN_ERROR_RX_FOV0) != 0U) { can_rx_overrun_count++; }
+
+    // HAL 的错误位会累积；消费已计数的位，避免下一次回调重复计数。
+    hcan->ErrorCode &= ~(HAL_CAN_ERROR_TX_ALST0 | HAL_CAN_ERROR_TX_ALST1 |
+                         HAL_CAN_ERROR_TX_ALST2 | HAL_CAN_ERROR_TX_TERR0 |
+                         HAL_CAN_ERROR_TX_TERR1 | HAL_CAN_ERROR_TX_TERR2 |
+                         HAL_CAN_ERROR_RX_FOV0);
 }
 
 void BSP_CAN_RxFifo0Callback(CAN_HandleTypeDef *hcan)
@@ -181,12 +231,13 @@ void BSP_CAN_Service_PeriodElapsedCallback(CAN_HandleTypeDef *hcan)
      * BOFF 位只反映此刻状态，只有 0→1 的那一下才算一次故障。
      * （若 AutoBusOff 是关的，BOFF 会一直是 1 —— 那是"卡死在 bus-off"，
      *   值应该是 1 不是几千，一眼能看出来区别） */
+    const uint8_t bus_index = (hcan->Instance == CAN1) ? 0U : 1U;
     const bool bus_off_now = (hcan->Instance->ESR & CAN_ESR_BOFF) != 0U;
-    if (bus_off_now && !can_in_bus_off)
+    if (bus_off_now && !can_in_bus_off[bus_index])
     {
         can_bus_off_count++;
     }
-    can_in_bus_off = bus_off_now;
+    can_in_bus_off[bus_index] = bus_off_now;
 
     /* LEC = 最近一次总线错误的原因（★ 粘滞位：硬件不清零，读到的是
      *   自上电以来最近一次，不代表"此刻正在错"）：

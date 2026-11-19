@@ -29,6 +29,7 @@
 
 #include "Accel/bsp_bmi088_accel.h"
 #include "Gyro/bsp_bmi088_gyro.h"
+#include "bsp_bmi088_mounting.h"
 #include "alg_filter_vqf.h"
 #include "alg_quaternion.h"
 
@@ -96,7 +97,8 @@ struct Struct_BMI088_VQF_Config
  *
  *        Sequence 每发布一帧 +1，消费者可比对判断"有没有新帧"；
  *        Sample_Time_Us 是产出这帧的【陀螺样本时刻】，不是"现在"。
- *        Valid 只表示曾产出结果；队列没数据时整帧保持不变。
+ *        无效陀螺样本会发布 Valid=false，保留上一有效结果及其时间戳。
+ *        队列没数据时整帧保持不变。
  *        对外数据的新鲜度由 INS 层根据 Sample_Time_Us 判断。
  */
 struct Struct_BMI088_Attitude_Frame
@@ -104,8 +106,8 @@ struct Struct_BMI088_Attitude_Frame
     Class_Quaternion_f32 Quaternion;        ///< [w, x, y, z]
     Class_Matrix_f32<3, 1> Euler_Angle;     ///< [Yaw, Pitch, Roll]（弧度，库的约定）
     Class_Matrix_f32<3, 1> Gyro_Bias;       ///< VQF 在线估计的零偏 rad/s
-    Class_Matrix_f32<3, 1> Gyro;            ///< 机体系原始角速度（未扣零偏）rad/s
-    Class_Matrix_f32<3, 1> Accel;           ///< 机体系加速度 m/s^2
+    Class_Matrix_f32<3, 1> Gyro;            ///< 安装机体系原始角速度（未扣零偏）rad/s
+    Class_Matrix_f32<3, 1> Accel;           ///< 安装机体系加速度 m/s^2
     uint64_t Sample_Time_Us = 0U;           ///< 产出本帧的陀螺样本时间戳
     uint32_t Sequence = 0U;                 ///< 发布序号，每帧 +1
     uint8_t Rest_Detected = 0U;             ///< VQF 静止检测标志
@@ -127,7 +129,7 @@ public:
 
     /**
      * @brief 设置开机零偏初值：仅在 Init() 之后、调度器启动前调用
-     * @param __Bias 陀螺零偏，单位 rad/s
+     * @param __Bias 陀螺零偏，传感器坐标系，单位 rad/s
      * @note  为什么要这个接口：上游用的是"板级标定常量"，换板子就不准；
      *        本工程改成【开机静止采样自标定】，标出来的值从这里喂进去，
      *        在线估计就只需要跟温漂的残余 —— 上电零漂能立刻降一个量级。
@@ -136,7 +138,7 @@ public:
 
     /**
      * @brief 请求更新 VQF 零偏（★ 跨任务可用，实际生效在解算任务里）
-     * @note  为什么不能从别的任务直接调 Set_VQF_Bias_Estimate：
+     * @note  __Bias 使用传感器坐标系。为什么不能从别的任务直接调 Set_VQF_Bias_Estimate：
      *        那是逐元素写滤波器内部状态，而 BMI088_Task 同时在跑
      *        零偏估计的读-改-写 —— 两个任务并发（同级 + 时间片）会写出
      *        混合值。本接口只登记"待应用的零偏"，由 Calculate() 在
@@ -254,7 +256,7 @@ protected:
         0.0f, 1.0f, 0.0f,
         0.0f, 0.0f, 1.0f};
     const float ACCEL_BIAS_DATA[3] = {0.0f, 0.0f, 0.0f};
-    const float GYRO_ZERO_OFFSET[3] = {0.0f, 0.0f, 0.0f};
+    const float GYRO_ZERO_OFFSET[3] = {0.0f, 0.0f, 0.0f}; ///< 传感器坐标系 rad/s
 
     Struct_BMI088_VQF_Config VQF_Config;
     Class_Filter_VQF Filter_VQF;
@@ -364,7 +366,8 @@ inline Class_Matrix_f32<3, 1> Class_BMI088::Get_Fixed_Corrected_Gyro() const
 
 inline Class_Matrix_f32<3, 1> Class_BMI088::Get_Fixed_Gyro_Offset() const
 {
-    return Class_Matrix_f32<3, 1>(GYRO_ZERO_OFFSET);
+    return BMI088_Mounting::Sensor_To_Body(
+        Class_Matrix_f32<3, 1>(GYRO_ZERO_OFFSET));
 }
 
 /** Euler 角顺序为 [Yaw, Pitch, Roll]（标准 ZYX），单位弧度 */

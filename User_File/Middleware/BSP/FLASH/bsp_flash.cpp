@@ -85,7 +85,7 @@ bool BSP_Flash_Calibration_Save(const float Gyro_Bias[3], float Temperature)
     bool ok = (HAL_FLASH_Unlock() == HAL_OK);
     if (ok)
     {
-        /* ⚠️ 从这里开始全机冻结 ~1-2 秒（128KB 扇区擦除 + 7 个 word 编程） */
+        /* 单 bank 擦写会阻塞 Flash 取指；耗时应在目标板测量。 */
         FLASH_EraseInitTypeDef erase = {};
         erase.TypeErase    = FLASH_TYPEERASE_SECTORS;
         erase.Sector       = BSP_FLASH_CAL_SECTOR;

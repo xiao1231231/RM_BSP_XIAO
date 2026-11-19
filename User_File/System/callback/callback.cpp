@@ -5,6 +5,7 @@
 #include "bsp_spi.h"
 #include "bsp_bmi088.h"
 #include "bsp_can.h"
+#include "can.h"
 #include "cmsis_os2.h"
 
 // CubeMX 生成的任务句柄只在系统层用于通知转发。
@@ -135,6 +136,36 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
     BSP_CAN_RxFifo0Callback(hcan);
+}
+
+extern "C" void CAN1_TX_IRQHandler(void)
+{
+    HAL_CAN_IRQHandler(&hcan1);
+}
+
+extern "C" void CAN2_TX_IRQHandler(void)
+{
+    HAL_CAN_IRQHandler(&hcan2);
+}
+
+extern "C" void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    BSP_CAN_TxCompleteCallback(hcan);
+}
+
+extern "C" void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    BSP_CAN_TxCompleteCallback(hcan);
+}
+
+extern "C" void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan)
+{
+    BSP_CAN_TxCompleteCallback(hcan);
+}
+
+extern "C" void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
+{
+    BSP_CAN_ErrorCallback(hcan);
 }
 
 /* ── 以后新增外设的回调加在这里，同样【每一个】都要 extern "C" ──

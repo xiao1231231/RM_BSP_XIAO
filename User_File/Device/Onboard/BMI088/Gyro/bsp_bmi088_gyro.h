@@ -94,6 +94,9 @@ public:
 
     bool Pop_Sample(Struct_BMI088_Gyro_Sample &__Sample);
 
+    /** 调度器启动前丢弃启动标定期间的旧样本；不能与解算消费者并发调用。 */
+    void Discard_Samples();
+
     inline uint16_t Get_Queue_Depth() const;
 
     inline uint16_t Get_Queue_High_Watermark() const;

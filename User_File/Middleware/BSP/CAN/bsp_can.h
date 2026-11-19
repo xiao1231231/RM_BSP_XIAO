@@ -24,7 +24,7 @@ struct Struct_CAN_Device
 };
 
 /**
- * @brief 初始化一路 CAN：过滤器(全收) → 启动 → 打开 FIFO0 收报中断
+ * @brief 初始化 CAN：过滤器(全收) → 启动 → 接收、溢出和发送结果通知
  * @note  调度器启动前调用
  * @return false = 过滤器 / 启动 / 开中断 任一步失败（此时电机全部不可用）
  */
@@ -35,7 +35,7 @@ bool CAN_Register_Device(CAN_HandleTypeDef *hcan, uint32_t Rx_ID, void *Id,
                          void (*Callback_Function)(void *Id, uint8_t *Data, uint16_t Length));
 
 /**
- * @brief 发送一帧
+ * @brief 提交一帧到硬件邮箱；true 不代表已发送或电机已执行
  * @note  标准 ID（> 0x7FF 直接拒绝）、数据帧、1~8 字节。
  *        三个邮箱都满时返回 false，不排队 —— 重发由调用方决定
  */
@@ -44,6 +44,8 @@ bool CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Tx_ID,
 
 /* 以下由 System/callback 转发调用，业务代码不要直接调 */
 void BSP_CAN_RxFifo0Callback(CAN_HandleTypeDef *hcan);
+void BSP_CAN_TxCompleteCallback(CAN_HandleTypeDef *hcan);
+void BSP_CAN_ErrorCallback(CAN_HandleTypeDef *hcan);
 
 /**
  * @brief 总线故障巡检，由 System_Service_Task 每 1ms 调用
@@ -51,10 +53,17 @@ void BSP_CAN_RxFifo0Callback(CAN_HandleTypeDef *hcan);
  */
 void BSP_CAN_Service_PeriodElapsedCallback(CAN_HandleTypeDef *hcan);
 
-/* ── 总线健康（调试器里看；正常时三个计数都恒为 0） ── */
+/* ── 总线健康（调试器里看；提交/完成计数正常增长，故障计数正常不增长） ── */
 extern volatile uint32_t can_bus_off_count;     /* bus-off 进入次数 */
 extern volatile uint32_t can_last_lec;          /* 最近一次总线错误原因 —— LEC 粘滞，
                                                    硬件不清零，读到的是"自上电以来最近一次" */
 extern volatile uint32_t can_tx_drop_count;     /* 三邮箱全满被放弃的发送次数（>0 = 拥塞/掉线） */
+// 以下提交/完成计数为所有发送者和总线的累计值，Motor_Task 用其差值确认停机批次。
+// 运行期不得清零；新增发送者或总线时须重新检查停机确认的归属假设。
+extern volatile uint32_t can_tx_submit_count;   /* 已提交邮箱，不能据此判断发送成功 */
+extern volatile uint32_t can_tx_complete_count; /* 硬件 TXOK 次数，不代表执行器已执行 */
+extern volatile uint32_t can_tx_arbitration_lost_count;
+extern volatile uint32_t can_tx_error_count;
+extern volatile uint32_t can_rx_overrun_count;
 
 #endif /* BSP_CAN_H */
